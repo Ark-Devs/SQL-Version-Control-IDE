@@ -2,8 +2,10 @@ import { useCallback, useRef, useState } from 'react'
 import ObjectExplorer from '../explorer/ObjectExplorer'
 import EditorTabs from '../editor/EditorTabs'
 import SqlEditor from '../editor/SqlEditor'
+import DiffTab from '../editor/DiffTab'
 import ResultsPane from '../results/ResultsPane'
 import ConnectionDialog from '../connections/ConnectionDialog'
+import GitPanel from '../git/GitPanel'
 import Toolbar from './Toolbar'
 import StatusBar from './StatusBar'
 import { useTabs } from '../../state/tabsStore'
@@ -19,6 +21,7 @@ export default function Shell(): React.JSX.Element {
   })
   const [explorerWidth, setExplorerWidth] = useState(300)
   const [resultsHeight, setResultsHeight] = useState(260)
+  const [sidebarTab, setSidebarTab] = useState<'explorer' | 'git'>('explorer')
 
   const dragging = useRef<'explorer' | 'results' | null>(null)
 
@@ -52,18 +55,47 @@ export default function Shell(): React.JSX.Element {
       <Toolbar onManageConnections={() => setDialog({ open: true, editing: null })} />
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ width: explorerWidth, flexShrink: 0, minWidth: 0 }}>
-          <ObjectExplorer
-            onAddConnection={() => setDialog({ open: true, editing: null })}
-            onEditConnection={(p) => setDialog({ open: true, editing: p })}
-          />
+        <div style={{ width: explorerWidth, flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--bg-panel)', borderRight: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
+            {(['explorer', 'git'] as const).map((t) => (
+              <div
+                key={t}
+                onClick={() => setSidebarTab(t)}
+                style={{
+                  flex: 1,
+                  textAlign: 'center',
+                  padding: '6px 0',
+                  cursor: 'pointer',
+                  fontSize: 11,
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.5,
+                  background: sidebarTab === t ? 'var(--bg-panel)' : 'var(--bg-panel-alt)',
+                  color: sidebarTab === t ? 'var(--text-bright)' : 'var(--text-dim)',
+                  borderBottom: sidebarTab === t ? '2px solid var(--accent)' : '2px solid transparent'
+                }}
+              >
+                {t === 'explorer' ? 'Explorer' : 'Git'}
+              </div>
+            ))}
+          </div>
+          <div style={{ flex: 1, minHeight: 0, display: sidebarTab === 'explorer' ? 'block' : 'none' }}>
+            <ObjectExplorer
+              onAddConnection={() => setDialog({ open: true, editing: null })}
+              onEditConnection={(p) => setDialog({ open: true, editing: p })}
+            />
+          </div>
+          <div style={{ flex: 1, minHeight: 0, display: sidebarTab === 'git' ? 'block' : 'none' }}>
+            <GitPanel />
+          </div>
         </div>
         <div onMouseDown={startDrag('explorer')} style={{ width: 4, cursor: 'col-resize', flexShrink: 0, background: 'transparent' }} />
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           <EditorTabs />
           <div style={{ flex: 1, minHeight: 0 }}>
-            {activeTab ? (
+            {activeTab?.kind === 'diff' ? (
+              <DiffTab key={activeTab.id} tab={activeTab} />
+            ) : activeTab ? (
               <SqlEditor key={activeTab.id} tabId={activeTab.id} content={activeTab.content} />
             ) : (
               <div style={{ display: 'grid', placeItems: 'center', height: '100%', color: 'var(--text-dim)' }}>

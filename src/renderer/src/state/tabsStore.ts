@@ -11,6 +11,7 @@ export interface ExecutionState {
 export interface Tab {
   id: string
   title: string
+  kind?: 'sql' | 'diff'
   connId?: string
   database?: string
   content: string
@@ -18,6 +19,9 @@ export interface Tab {
   execution?: ExecutionState
   /** repo-relative path when the tab was opened from the git repo */
   repoPath?: string
+  /** diff tabs: original (left) content; `content` is the modified (right) side */
+  diffOriginal?: string
+  diffLabels?: { original: string; modified: string }
 }
 
 interface TabsState {
@@ -54,10 +58,13 @@ export const useTabs = create<TabsState>((set, get) => {
       const tab: Tab = {
         id,
         title: partial?.title ?? `SQLQuery${n}.sql`,
+        kind: partial?.kind ?? 'sql',
         connId: partial?.connId,
         database: partial?.database,
         content: partial?.content ?? '',
         repoPath: partial?.repoPath,
+        diffOriginal: partial?.diffOriginal,
+        diffLabels: partial?.diffLabels,
         dirty: false
       }
       set((s) => ({ tabs: [...s.tabs, tab], activeId: id, counter: n }))

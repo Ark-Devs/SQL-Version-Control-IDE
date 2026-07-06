@@ -1,5 +1,6 @@
 import { useConnections } from '../../state/connectionsStore'
 import { useTabs } from '../../state/tabsStore'
+import BranchBar from '../git/BranchBar'
 
 export default function StatusBar(): React.JSX.Element {
   const { tabs, activeId } = useTabs()
@@ -27,6 +28,7 @@ export default function StatusBar(): React.JSX.Element {
       }}
     >
       {item(exec?.running ? 'Executing…' : 'Ready')}
+      <BranchBar />
       {profile && item(`${profile.name} (${profile.server})`)}
       {activeTab?.database && item(activeTab.database)}
       <div style={{ flex: 1 }} />

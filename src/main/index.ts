@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { join } from 'path'
 import { startBackend, stopBackend, getBackendInfo } from './backend'
 import { setupMenu } from './menu'
@@ -38,6 +38,14 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   ipcMain.handle('backend:info', () => getBackendInfo())
+
+  ipcMain.handle('dialog:pickFolder', async (_e, title: string) => {
+    const res = await dialog.showOpenDialog({
+      title,
+      properties: ['openDirectory', 'createDirectory', 'promptToCreate']
+    })
+    return res.canceled ? null : res.filePaths[0]
+  })
 
   setupMenu()
   createWindow()

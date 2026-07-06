@@ -12,6 +12,7 @@ import (
 
 	"svcide/internal/conn"
 	"svcide/internal/db"
+	"svcide/internal/gitrepo"
 	"svcide/internal/httpapi"
 )
 
@@ -26,6 +27,7 @@ func New(token string, shutdownCh chan struct{}) (http.Handler, error) {
 		Store:    store,
 		Registry: conn.NewRegistry(store),
 		Execs:    db.NewManager(),
+		Repo:     gitrepo.NewManager(),
 	}
 
 	r := chi.NewRouter()

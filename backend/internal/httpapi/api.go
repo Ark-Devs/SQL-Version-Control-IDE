@@ -8,6 +8,7 @@ import (
 
 	"svcide/internal/conn"
 	"svcide/internal/db"
+	"svcide/internal/gitrepo"
 )
 
 // Deps carries shared services into the HTTP handlers.
@@ -15,6 +16,7 @@ type Deps struct {
 	Store    *conn.Store
 	Registry *conn.Registry
 	Execs    *db.Manager
+	Repo     *gitrepo.Manager
 }
 
 // Mount attaches all API routes under /api.
@@ -22,6 +24,7 @@ func Mount(r chi.Router, d *Deps) {
 	mountConnections(r, d)
 	mountExplorer(r, d)
 	mountQuery(r, d)
+	mountVCS(r, d)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
