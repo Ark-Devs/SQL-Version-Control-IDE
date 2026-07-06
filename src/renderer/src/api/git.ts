@@ -71,5 +71,11 @@ export const gitApi = {
   log: (path?: string, limit = 50) =>
     get<LogEntry[] | null>(`/repo/log?limit=${limit}${path ? `&path=${enc(path)}` : ''}`),
   file: (path: string, ref: string) =>
-    get<{ content: string }>(`/repo/file?path=${enc(path)}&ref=${enc(ref)}`)
+    get<{ content: string }>(`/repo/file?path=${enc(path)}&ref=${enc(ref)}`),
+
+  remotes: () => get<{ name: string; url: string }[] | null>('/repo/remotes'),
+  setRemote: (name: string, url: string) => post('/repo/remotes', { name, url }),
+  push: (remote = 'origin', token = '') => post<{ pushed: boolean }>('/repo/push', { remote, token }),
+  fetch: (remote = 'origin', token = '') => post<{ fetched: boolean }>('/repo/fetch', { remote, token }),
+  pull: (remote = 'origin', token = '') => post<MergeResult>('/repo/pull', { remote, token })
 }

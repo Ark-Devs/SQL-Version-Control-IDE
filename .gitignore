@@ -8,3 +8,4 @@ backend/bin/
 .env
 .vscode/*
 !.vscode/extensions.json
+tsconfig.*.tsbuildinfo

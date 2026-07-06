@@ -8,6 +8,7 @@ import (
 
 	"svcide/internal/conn"
 	"svcide/internal/db"
+	"svcide/internal/deploy"
 	"svcide/internal/gitrepo"
 )
 
@@ -17,6 +18,8 @@ type Deps struct {
 	Registry *conn.Registry
 	Execs    *db.Manager
 	Repo     *gitrepo.Manager
+	Planner  *deploy.Planner
+	AcCache  *db.AcCache
 }
 
 // Mount attaches all API routes under /api.
@@ -25,6 +28,9 @@ func Mount(r chi.Router, d *Deps) {
 	mountExplorer(r, d)
 	mountQuery(r, d)
 	mountVCS(r, d)
+	mountDeploy(r, d)
+	mountMeta(r, d)
+	mountRemote(r, d)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

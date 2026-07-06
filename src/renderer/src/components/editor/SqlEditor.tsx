@@ -1,8 +1,9 @@
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import Editor, { OnMount } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import { monaco } from './monacoSetup'
 import { useTabs } from '../../state/tabsStore'
+import { prefetchAutocomplete } from './completionProvider'
 
 interface Props {
   tabId: string
@@ -15,6 +16,11 @@ interface Props {
  */
 export default function SqlEditor({ tabId, content }: Props): React.JSX.Element {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
+  const tab = useTabs((s) => s.tabs.find((t) => t.id === tabId))
+
+  useEffect(() => {
+    if (tab?.connId && tab.database) prefetchAutocomplete(tab.connId, tab.database)
+  }, [tab?.connId, tab?.database])
 
   const runSelectionOrAll = (): void => {
     const ed = editorRef.current

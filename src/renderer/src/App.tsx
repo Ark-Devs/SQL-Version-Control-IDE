@@ -4,6 +4,9 @@ import { useConnections } from './state/connectionsStore'
 import { useTabs } from './state/tabsStore'
 import Shell from './components/layout/Shell'
 import './components/editor/monacoSetup'
+import { registerSqlCompletions } from './components/editor/completionProvider'
+
+registerSqlCompletions()
 
 type BackendState = 'connecting' | 'connected' | 'error'
 

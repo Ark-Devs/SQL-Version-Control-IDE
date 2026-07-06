@@ -30,6 +30,18 @@ type ManifestObject struct {
 
 const manifestPath = ".svcide/manifest.json"
 
+// ParseManifest decodes manifest JSON (e.g. read from a git ref).
+func ParseManifest(data []byte) (*Manifest, error) {
+	var man Manifest
+	if err := json.Unmarshal(data, &man); err != nil {
+		return nil, err
+	}
+	if man.Objects == nil {
+		man.Objects = map[string]ManifestObject{}
+	}
+	return &man, nil
+}
+
 func typeFolder(t string) string {
 	switch t {
 	case "table":

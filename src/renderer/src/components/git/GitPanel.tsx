@@ -7,6 +7,8 @@ import { gitApi, type FileChange } from '../../api/git'
 import ContextMenu, { MenuItem } from '../common/ContextMenu'
 import HistoryDialog from './HistoryDialog'
 import MergeDialog from './MergeDialog'
+import RemoteSection from './RemoteSection'
+import DeployWizard from '../deploy/DeployWizard'
 
 export default function GitPanel(): React.JSX.Element {
   const git = useGit()
@@ -16,6 +18,7 @@ export default function GitPanel(): React.JSX.Element {
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
   const [historyPath, setHistoryPath] = useState<string | null>(null)
   const [showMerge, setShowMerge] = useState(false)
+  const [showDeploy, setShowDeploy] = useState(false)
 
   useEffect(() => {
     void git.refresh()
@@ -123,6 +126,13 @@ export default function GitPanel(): React.JSX.Element {
             ⑃ Merge…
           </button>
         </div>
+        <button
+          disabled={git.busy !== null}
+          onClick={() => setShowDeploy(true)}
+          title="Deploy a branch's objects to any server (CREATE OR ALTER in a transaction)"
+        >
+          🚀 Deploy…
+        </button>
         {statusMsg && <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{statusMsg}</div>}
         {git.error && <div style={{ fontSize: 11, color: 'var(--error)', userSelect: 'text' }}>{git.error}</div>}
       </div>
@@ -172,6 +182,8 @@ export default function GitPanel(): React.JSX.Element {
         ))}
       </div>
 
+      <RemoteSection />
+
       <div style={{ padding: 10, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 6 }}>
         <textarea
           placeholder="Commit message"
@@ -200,6 +212,7 @@ export default function GitPanel(): React.JSX.Element {
       {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} />}
       {historyPath && <HistoryDialog path={historyPath} onClose={() => setHistoryPath(null)} />}
       {showMerge && <MergeDialog onClose={() => setShowMerge(false)} />}
+      {showDeploy && <DeployWizard onClose={() => setShowDeploy(false)} />}
     </div>
   )
 }
