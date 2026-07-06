@@ -102,7 +102,7 @@ export default function GitPanel(): React.JSX.Element {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={{ fontSize: 11, color: 'var(--text-dim)', userSelect: 'text' }} title={git.info.path}>
-          {git.info.manifest?.sourceDatabase} → {git.info.path?.split(/[\\/]/).slice(-1)[0]}
+          {(git.info.manifest?.databases ?? []).join(', ')} → {git.info.path?.split(/[\\/]/).slice(-1)[0]}
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
           <button
@@ -217,22 +217,26 @@ export default function GitPanel(): React.JSX.Element {
   )
 }
 
-/** Form to create a repo from a connection + database. */
+/**
+ * Form to create a system repo from a connection + one or more databases
+ * (e.g. HIS = Hospital + Pharmacy + Chan on one server).
+ */
 function NewRepoForm(): React.JSX.Element {
   const profiles = useConnections((s) => s.profiles)
   const explorer = useExplorer()
   const [connId, setConnId] = useState('')
-  const [database, setDatabase] = useState('')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
   const databases = connId ? explorer.databases[connId] : undefined
+  const system = ['master', 'model', 'msdb', 'tempdb']
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, border: '1px solid var(--border)', padding: 8 }}>
-      <div style={{ fontSize: 12, fontWeight: 600 }}>New repo from database</div>
+      <div style={{ fontSize: 12, fontWeight: 600 }}>New repo from database(s)</div>
       <select
         value={connId}
         onChange={(e) => {
           setConnId(e.target.value)
-          setDatabase('')
+          setSelected(new Set())
           if (e.target.value) void explorer.loadDatabases(e.target.value)
         }}
       >
@@ -243,29 +247,44 @@ function NewRepoForm(): React.JSX.Element {
           </option>
         ))}
       </select>
-      <select value={database} onChange={(e) => setDatabase(e.target.value)} disabled={!connId}>
-        <option value="">(choose database)</option>
-        {(databases ?? []).map((d) => (
-          <option key={d} value={d}>
-            {d}
-          </option>
-        ))}
-      </select>
+      {connId && (
+        <div style={{ maxHeight: 160, overflow: 'auto', border: '1px solid var(--border)', padding: 4 }}>
+          {(databases ?? []).filter((d) => !system.includes(d)).map((d) => (
+            <label key={d} style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '2px 4px', fontSize: 12, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={selected.has(d)}
+                onChange={() =>
+                  setSelected((prev) => {
+                    const next = new Set(prev)
+                    if (next.has(d)) next.delete(d)
+                    else next.add(d)
+                    return next
+                  })
+                }
+              />
+              {d}
+            </label>
+          ))}
+          {databases === null && <div style={{ padding: 4, color: 'var(--text-dim)', fontSize: 12 }}>Loading…</div>}
+        </div>
+      )}
       <button
         className="primary"
-        disabled={!connId || !database}
+        disabled={!connId || selected.size === 0}
+        title="One repo can track a whole system across several databases"
         onClick={async () => {
           const path = await window.svcide.pickFolder('Choose an empty folder for the repository')
           if (!path) return
           try {
-            await useGit.getState().initRepo(path, connId, database)
+            await useGit.getState().initRepo(path, connId, [...selected])
             await useGit.getState().sync()
           } catch {
             /* error stored in gitStore */
           }
         }}
       >
-        Create Repo…
+        Create Repo ({selected.size} database{selected.size === 1 ? '' : 's'})…
       </button>
     </div>
   )

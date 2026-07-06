@@ -11,18 +11,21 @@ import (
 
 // ScriptedObject is one database object rendered to a deterministic .sql file.
 type ScriptedObject struct {
-	Schema    string
-	Name      string
-	Type      string // table | view | proc | tvf | scalar | trigger
-	SQL       string // normalized script
-	Encrypted bool   // encrypted module: SQL is empty, surface a warning
+	Schema     string
+	Name       string
+	Type       string // table | view | proc | tvf | scalar | trigger
+	SQL        string // normalized script
+	Encrypted  bool   // encrypted module: SQL is empty, surface a warning
+	CreateDate string
+	ModifyDate string // differs from CreateDate when the object was ever ALTERed
 }
 
 // ScriptModules scripts every non-table programmable object (procs, views,
 // functions, triggers) using its original source from sys.sql_modules.
 func ScriptModules(ctx context.Context, pool *sql.DB) ([]ScriptedObject, error) {
 	rows, err := pool.QueryContext(ctx, `
-SELECT s.name, o.name, RTRIM(o.type), m.definition
+SELECT s.name, o.name, RTRIM(o.type), m.definition,
+       CONVERT(varchar(23), o.create_date, 121), CONVERT(varchar(23), o.modify_date, 121)
 FROM sys.objects o
 JOIN sys.schemas s ON o.schema_id = s.schema_id
 JOIN sys.sql_modules m ON m.object_id = o.object_id
@@ -37,7 +40,7 @@ ORDER BY s.name, o.name`)
 		var so ScriptedObject
 		var typeCode string
 		var def sql.NullString
-		if err := rows.Scan(&so.Schema, &so.Name, &typeCode, &def); err != nil {
+		if err := rows.Scan(&so.Schema, &so.Name, &typeCode, &def, &so.CreateDate, &so.ModifyDate); err != nil {
 			return nil, err
 		}
 		so.Type = objectTypeName(typeCode)
@@ -171,13 +174,15 @@ func ScriptTables(ctx context.Context, pool *sql.DB) ([]ScriptedObject, error) {
 	fks := map[key][]tableForeignKey{}
 	checks := map[key][]tableCheck{}
 	indexes := map[key][]tableIndex{}
+	dates := map[key][2]string{}
 	var order []key
 
 	// columns (+identity, computed, defaults)
 	rows, err := pool.QueryContext(ctx, `
 SELECT s.name, tb.name, c.name, ty.name, c.max_length, c.precision, c.scale, c.is_nullable,
        c.is_identity, ISNULL(ic.seed_value, 0), ISNULL(ic.increment_value, 0),
-       c.is_computed, ISNULL(cc.definition, ''), ISNULL(cc.is_persisted, 0), ISNULL(dc.definition, '')
+       c.is_computed, ISNULL(cc.definition, ''), ISNULL(cc.is_persisted, 0), ISNULL(dc.definition, ''),
+       CONVERT(varchar(23), tb.create_date, 121), CONVERT(varchar(23), tb.modify_date, 121)
 FROM sys.tables tb
 JOIN sys.schemas s ON tb.schema_id = s.schema_id
 JOIN sys.columns c ON c.object_id = tb.object_id
@@ -194,14 +199,17 @@ ORDER BY s.name, tb.name, c.column_id`)
 		var k key
 		var c tableColumn
 		var seed, incr sql.NullFloat64
+		var created, modified string
 		if err := rows.Scan(&k.schema, &k.table, &c.Name, &c.TypeName, &c.MaxLen, &c.Precision, &c.Scale,
-			&c.Nullable, &c.Identity, &seed, &incr, &c.Computed, &c.ComputedAs, &c.Persisted, &c.Default); err != nil {
+			&c.Nullable, &c.Identity, &seed, &incr, &c.Computed, &c.ComputedAs, &c.Persisted, &c.Default,
+			&created, &modified); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		c.Seed, c.Increment = int64(seed.Float64), int64(incr.Float64)
 		if _, seen := cols[k]; !seen {
 			order = append(order, k)
+			dates[k] = [2]string{created, modified}
 		}
 		cols[k] = append(cols[k], c)
 	}
@@ -357,10 +365,12 @@ ORDER BY s.name, tb.name, i.name, ic.is_included_column, ic.key_ordinal`)
 	var out []ScriptedObject
 	for _, k := range order {
 		out = append(out, ScriptedObject{
-			Schema: k.schema,
-			Name:   k.table,
-			Type:   "table",
-			SQL:    renderTable(k.schema, k.table, cols[k], constraints[k], fks[k], checks[k], indexes[k]),
+			Schema:     k.schema,
+			Name:       k.table,
+			Type:       "table",
+			SQL:        renderTable(k.schema, k.table, cols[k], constraints[k], fks[k], checks[k], indexes[k]),
+			CreateDate: dates[k][0],
+			ModifyDate: dates[k][1],
 		})
 	}
 	return out, nil

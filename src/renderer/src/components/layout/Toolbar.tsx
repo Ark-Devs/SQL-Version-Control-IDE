@@ -4,9 +4,10 @@ import { useTabs } from '../../state/tabsStore'
 
 interface Props {
   onManageConnections: () => void
+  onOpenSettings: () => void
 }
 
-export default function Toolbar({ onManageConnections }: Props): React.JSX.Element {
+export default function Toolbar({ onManageConnections, onOpenSettings }: Props): React.JSX.Element {
   const profiles = useConnections((s) => s.profiles)
   const { tabs, activeId } = useTabs()
   const activeTab = tabs.find((t) => t.id === activeId)
@@ -89,6 +90,9 @@ export default function Toolbar({ onManageConnections }: Props): React.JSX.Eleme
 
       <div style={{ flex: 1 }} />
       <button onClick={onManageConnections}>Connections…</button>
+      <button onClick={onOpenSettings} title="Settings (author name)">
+        ⚙
+      </button>
     </div>
   )
 }

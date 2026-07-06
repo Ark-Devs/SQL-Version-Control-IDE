@@ -1,8 +1,8 @@
 package httpapi
 
 import (
+	"database/sql"
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -15,12 +15,16 @@ func mountVCS(r chi.Router, d *Deps) {
 	r.Route("/api/repo", func(r chi.Router) {
 		r.Post("/init", func(w http.ResponseWriter, req *http.Request) {
 			var body struct {
-				Path     string `json:"path"`
-				ConnID   string `json:"connId"`
-				Database string `json:"database"`
+				Path      string   `json:"path"`
+				ConnID    string   `json:"connId"`
+				Databases []string `json:"databases"`
 			}
 			if err := decode(req, &body); err != nil {
 				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			if len(body.Databases) == 0 {
+				writeErr(w, http.StatusBadRequest, errors.New("at least one database is required"))
 				return
 			}
 			if err := d.Repo.Init(body.Path); err != nil {
@@ -33,10 +37,10 @@ func mountVCS(r chi.Router, d *Deps) {
 				return
 			}
 			man := &gitrepo.Manifest{
-				SourceServer:   profile.Server,
-				SourceDatabase: body.Database,
-				SourceConnID:   body.ConnID,
-				Objects:        map[string]gitrepo.ManifestObject{},
+				SourceServer: profile.Server,
+				SourceConnID: body.ConnID,
+				Databases:    body.Databases,
+				Objects:      map[string]gitrepo.ManifestObject{},
 			}
 			if err := d.Repo.WriteManifest(man); err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
@@ -79,28 +83,38 @@ func mountVCS(r chi.Router, d *Deps) {
 				return
 			}
 			var body struct {
-				ConnID   string `json:"connId"`
-				Database string `json:"database"`
+				ConnID string `json:"connId"`
 			}
 			_ = decode(req, &body) // optional override of the manifest source
-			connID, database := man.SourceConnID, man.SourceDatabase
+			connID := man.SourceConnID
 			if body.ConnID != "" {
 				connID = body.ConnID
 			}
-			if body.Database != "" {
-				database = body.Database
+			poolFor := func(database string) (*sql.DB, error) {
+				return d.Registry.Get(connID, database)
 			}
-			pool, err := d.Registry.Get(connID, database)
-			if err != nil {
-				writeErr(w, http.StatusBadRequest, fmt.Errorf("source connection: %w", err))
-				return
-			}
-			res, err := d.Repo.Sync(req.Context(), pool, man)
+			res, err := d.Repo.Sync(req.Context(), poolFor, man)
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
 			}
 			writeJSON(w, http.StatusOK, res)
+		})
+
+		// Drift: compare one database against the repo without writing.
+		// Powers the green (new) / yellow (modified) explorer badges.
+		r.Get("/drift/{connId}/{db}", func(w http.ResponseWriter, req *http.Request) {
+			pool, err := d.Registry.Get(chi.URLParam(req, "connId"), chi.URLParam(req, "db"))
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			report, err := d.Repo.Drift(req.Context(), pool, chi.URLParam(req, "db"))
+			if err != nil {
+				writeErr(w, statusFor(err), err)
+				return
+			}
+			writeJSON(w, http.StatusOK, report)
 		})
 
 		r.Get("/changes", func(w http.ResponseWriter, _ *http.Request) {

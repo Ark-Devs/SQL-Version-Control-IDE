@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import { queryApi } from '../api/endpoints'
 import type { QuerySnapshot } from '../api/types'
+import { injectChangelog, isModuleDdl, moduleName } from '../utils/changelog'
+import { useSettings } from './settingsStore'
+import { useUi } from './uiStore'
 
 export interface ExecutionState {
   id: string
@@ -96,8 +99,22 @@ export const useTabs = create<TabsState>((set, get) => {
     run: async (id, sqlOverride) => {
       const tab = get().tabs.find((t) => t.id === id)
       if (!tab || !tab.connId || tab.execution?.running) return
-      const sql = (sqlOverride ?? tab.content).trim()
+      let sql = (sqlOverride ?? tab.content).trim()
       if (!sql) return
+
+      // module DDL → offer to record author/date/description in the header
+      if (isModuleDdl(sql)) {
+        const desc = await useUi.getState().askChangelog(moduleName(sql))
+        if (desc === null) return // cancelled
+        if (desc !== '') {
+          const author = useSettings.getState().settings.authorName || 'unknown'
+          sql = injectChangelog(sql, author, desc)
+          if (sqlOverride === undefined) {
+            // whole-buffer run: reflect the injected header in the editor
+            patchTab(id, { content: sql })
+          }
+        }
+      }
 
       // release previous execution of this tab
       if (tab.execution?.id) void queryApi.release(tab.execution.id)

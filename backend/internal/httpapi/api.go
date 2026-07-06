@@ -10,6 +10,7 @@ import (
 	"svcide/internal/db"
 	"svcide/internal/deploy"
 	"svcide/internal/gitrepo"
+	"svcide/internal/settings"
 )
 
 // Deps carries shared services into the HTTP handlers.
@@ -20,6 +21,7 @@ type Deps struct {
 	Repo     *gitrepo.Manager
 	Planner  *deploy.Planner
 	AcCache  *db.AcCache
+	Settings *settings.Store
 }
 
 // Mount attaches all API routes under /api.

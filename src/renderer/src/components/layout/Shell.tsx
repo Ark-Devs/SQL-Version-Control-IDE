@@ -5,8 +5,10 @@ import SqlEditor from '../editor/SqlEditor'
 import DiffTab from '../editor/DiffTab'
 import ResultsPane from '../results/ResultsPane'
 import ConnectionDialog from '../connections/ConnectionDialog'
+import ChangelogDialog from '../editor/ChangelogDialog'
 import GitPanel from '../git/GitPanel'
 import Toolbar from './Toolbar'
+import SettingsDialog from './SettingsDialog'
 import StatusBar from './StatusBar'
 import { useTabs } from '../../state/tabsStore'
 import type { Profile } from '../../api/types'
@@ -22,6 +24,7 @@ export default function Shell(): React.JSX.Element {
   const [explorerWidth, setExplorerWidth] = useState(300)
   const [resultsHeight, setResultsHeight] = useState(260)
   const [sidebarTab, setSidebarTab] = useState<'explorer' | 'git'>('explorer')
+  const [showSettings, setShowSettings] = useState(false)
 
   const dragging = useRef<'explorer' | 'results' | null>(null)
 
@@ -52,7 +55,10 @@ export default function Shell(): React.JSX.Element {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <Toolbar onManageConnections={() => setDialog({ open: true, editing: null })} />
+      <Toolbar
+        onManageConnections={() => setDialog({ open: true, editing: null })}
+        onOpenSettings={() => setShowSettings(true)}
+      />
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div style={{ width: explorerWidth, flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--bg-panel)', borderRight: '1px solid var(--border)' }}>
@@ -127,6 +133,8 @@ export default function Shell(): React.JSX.Element {
       {dialog.open && (
         <ConnectionDialog editing={dialog.editing} onClose={() => setDialog({ open: false, editing: null })} />
       )}
+      {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} />}
+      <ChangelogDialog />
     </div>
   )
 }

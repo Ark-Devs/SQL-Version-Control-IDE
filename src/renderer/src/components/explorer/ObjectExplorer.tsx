@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { useConnections } from '../../state/connectionsStore'
 import { useExplorer } from '../../state/explorerStore'
+import { useGit } from '../../state/gitStore'
 import { useTabs } from '../../state/tabsStore'
 import { explorerApi } from '../../api/endpoints'
 import type { ObjectInfo, ObjectType, Profile } from '../../api/types'
 import ContextMenu, { MenuItem } from '../common/ContextMenu'
+import NewObjectDialog, { NewObjectTarget } from './NewObjectDialog'
 import { Icons } from './icons'
 
 interface Props {
@@ -29,9 +31,13 @@ const OBJECT_FOLDERS: { label: string; type: ObjectType }[] = [
 export default function ObjectExplorer({ onAddConnection, onEditConnection }: Props): React.JSX.Element {
   const profiles = useConnections((s) => s.profiles)
   const explorer = useExplorer()
+  const drift = useGit((s) => s.drift)
+  const repoOpen = useGit((s) => s.info.open)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [loadErr, setLoadErr] = useState<Record<string, string>>({})
+  const [filter, setFilter] = useState('')
+  const [newObject, setNewObject] = useState<NewObjectTarget | null>(null)
 
   const toggle = (key: string): void => {
     setExpanded((prev) => {
@@ -119,25 +125,43 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
     </div>
   )
 
+  const newObjectItems = (connId: string, db: string): MenuItem[] => [
+    { label: 'New Stored Procedure…', onClick: () => setNewObject({ connId, database: db, kind: 'proc' }) },
+    { label: 'New Scalar Function…', onClick: () => setNewObject({ connId, database: db, kind: 'scalar' }) },
+    { label: 'New Table-valued Function…', onClick: () => setNewObject({ connId, database: db, kind: 'tvf' }) },
+    { label: 'New View…', onClick: () => setNewObject({ connId, database: db, kind: 'view' }) }
+  ]
+
   const renderObjects = (connId: string, db: string, depth: number): React.JSX.Element[] => {
     const objs = explorer.objects[`${connId}|${db}`]
     if (objs === null) return [row(`${connId}|${db}|loading`, depth, null, 'Loading…', { dim: true })]
     if (!objs) return []
+    const dbDrift = drift[`${connId}|${db}`] ?? {}
+    const f = filter.trim().toLowerCase()
 
     return OBJECT_FOLDERS.map((folder) => {
       const folderKey = `${connId}|${db}|folder|${folder.type}`
-      const items = objs.filter((o) => o.type === folder.type)
+      let items = objs.filter((o) => o.type === folder.type)
+      if (f) items = items.filter((o) => `${o.schema}.${o.name}`.toLowerCase().includes(f))
+      if (f && items.length === 0) return <div key={folderKey} />
       const children: React.JSX.Element[] = []
-      if (expanded.has(folderKey)) {
+      if (expanded.has(folderKey) || f) {
         for (const obj of items) {
           const objKey = `${connId}|${db}|obj|${obj.schema}.${obj.name}`
           const isTable = folder.type === 'table' || folder.type === 'view'
+          const status = dbDrift[`${obj.schema}.${obj.name}`]
           children.push(
             row(
               objKey,
               depth + 1,
               Icons[obj.type as keyof typeof Icons] ?? Icons.table,
-              `${obj.schema}.${obj.name}`,
+              status ? (
+                <span style={{ color: status === 'new' ? 'var(--success)' : 'var(--warning)' }} title={status === 'new' ? 'New — not in the repo baseline' : 'Modified since the repo baseline'}>
+                  {obj.schema}.{obj.name} {status === 'new' ? '●' : '●'}
+                </span>
+              ) : (
+                `${obj.schema}.${obj.name}`
+              ),
               {
                 expandable: isTable,
                 onExpand: () =>
@@ -184,7 +208,11 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
         <div key={folderKey}>
           {row(folderKey, depth, Icons.folder, `${folder.label} (${items.length})`, {
             expandable: true,
-            onExpand: () => toggle(folderKey)
+            onExpand: () => toggle(folderKey),
+            onContextMenu:
+              folder.type !== 'table'
+                ? (e) => setMenu({ x: e.clientX, y: e.clientY, items: newObjectItems(connId, db) })
+                : undefined
           })}
           {children}
         </div>
@@ -205,7 +233,11 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
         <div key={dbKey}>
           {row(dbKey, depth, Icons.database, db, {
             expandable: true,
-            onExpand: () => void expand(dbKey, () => explorer.loadObjects(p.id, db)),
+            onExpand: () =>
+              void expand(dbKey, async () => {
+                await explorer.loadObjects(p.id, db)
+                if (repoOpen) void useGit.getState().loadDrift(p.id, db)
+              }),
             onContextMenu: (e) =>
               setMenu({
                 x: e.clientX,
@@ -215,9 +247,13 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
                     label: 'New Query',
                     onClick: () => useTabs.getState().openTab({ connId: p.id, database: db })
                   },
+                  ...newObjectItems(p.id, db),
                   {
                     label: 'Refresh',
-                    onClick: () => void explorer.refreshDatabase(p.id, db)
+                    onClick: () => {
+                      void explorer.refreshDatabase(p.id, db)
+                      if (repoOpen) void useGit.getState().loadDrift(p.id, db)
+                    }
                   }
                 ]
               })
@@ -255,6 +291,20 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
         <button title="Add connection" style={{ padding: '1px 8px' }} onClick={onAddConnection}>
           +
         </button>
+      </div>
+      <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 4 }}>
+        <input
+          placeholder="🔍 Filter objects…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          style={{ flex: 1, fontSize: 12, padding: '3px 8px' }}
+          title="Filter tables/views/procs/functions by name (within expanded databases)"
+        />
+        {filter && (
+          <button style={{ padding: '1px 8px' }} onClick={() => setFilter('')} title="Clear filter">
+            ✕
+          </button>
+        )}
       </div>
       <div style={{ flex: 1, overflow: 'auto', paddingTop: 4 }}>
         {profiles.length === 0 && (
@@ -302,6 +352,7 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
         })}
       </div>
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+      {newObject && <NewObjectDialog target={newObject} onClose={() => setNewObject(null)} />}
     </div>
   )
 }

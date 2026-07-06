@@ -24,18 +24,18 @@ func TestSanitizeName(t *testing.T) {
 
 func TestObjectPath(t *testing.T) {
 	cases := []struct {
-		schema, name, typ, want string
+		database, schema, name, typ, want string
 	}{
-		{"dbo", "usp_Foo", "proc", "dbo/StoredProcedures/usp_Foo.sql"},
-		{"dbo", "vw_Bar", "view", "dbo/Views/vw_Bar.sql"},
-		{"sales", "tvf_X", "tvf", "sales/Functions/TableValued/tvf_X.sql"},
-		{"dbo", "fn_Y", "scalar", "dbo/Functions/Scalar/fn_Y.sql"},
-		{"dbo", "Patients", "table", "dbo/Tables/Patients.sql"},
+		{"Hospital", "dbo", "usp_Foo", "proc", "DB/Hospital/dbo/StoredProcedures/usp_Foo.sql"},
+		{"Hospital", "dbo", "vw_Bar", "view", "DB/Hospital/dbo/Views/vw_Bar.sql"},
+		{"Pharmacy", "sales", "tvf_X", "tvf", "DB/Pharmacy/sales/Functions/TableValued/tvf_X.sql"},
+		{"Pharmacy", "dbo", "fn_Y", "scalar", "DB/Pharmacy/dbo/Functions/Scalar/fn_Y.sql"},
+		{"Chan", "dbo", "Patients", "table", "DB/Chan/dbo/Tables/Patients.sql"},
 	}
 	for _, c := range cases {
-		got := ObjectPath(c.schema, c.name, c.typ)
+		got := ObjectPath(c.database, c.schema, c.name, c.typ)
 		if got != c.want {
-			t.Errorf("ObjectPath(%q,%q,%q) = %q, want %q", c.schema, c.name, c.typ, got, c.want)
+			t.Errorf("ObjectPath(%q,%q,%q,%q) = %q, want %q", c.database, c.schema, c.name, c.typ, got, c.want)
 		}
 		if strings.Contains(got, "\\") {
 			t.Errorf("path contains backslash: %q", got)

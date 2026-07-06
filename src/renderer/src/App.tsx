@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { initApi } from './api/client'
 import { useConnections } from './state/connectionsStore'
+import { useSettings } from './state/settingsStore'
 import { useTabs } from './state/tabsStore'
 import Shell from './components/layout/Shell'
 import './components/editor/monacoSetup'
@@ -18,6 +19,7 @@ export default function App(): React.JSX.Element {
     initApi()
       .then(async () => {
         await useConnections.getState().load()
+        await useSettings.getState().load().catch(() => undefined)
         setBackend('connected')
       })
       .catch((err) => {

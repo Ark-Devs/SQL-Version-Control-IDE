@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -17,17 +18,16 @@ func mountDeploy(r chi.Router, d *Deps) {
 				Ref          string   `json:"ref"`
 				Paths        []string `json:"paths"`
 				TargetConnID string   `json:"targetConnId"`
-				TargetDB     string   `json:"targetDb"`
 			}
 			if err := decode(req, &body); err != nil {
 				writeErr(w, http.StatusBadRequest, err)
 				return
 			}
-			if body.Ref == "" || body.TargetConnID == "" || body.TargetDB == "" {
-				writeErr(w, http.StatusBadRequest, errors.New("ref, targetConnId and targetDb are required"))
+			if body.Ref == "" || body.TargetConnID == "" {
+				writeErr(w, http.StatusBadRequest, errors.New("ref and targetConnId are required"))
 				return
 			}
-			plan, err := d.Planner.BuildPlan(body.Ref, body.Paths, body.TargetConnID, body.TargetDB)
+			plan, err := d.Planner.BuildPlan(body.Ref, body.Paths, body.TargetConnID)
 			if err != nil {
 				writeErr(w, statusFor(err), err)
 				return
@@ -41,12 +41,10 @@ func mountDeploy(r chi.Router, d *Deps) {
 				writeErr(w, http.StatusNotFound, fmt.Errorf("plan not found or expired"))
 				return
 			}
-			pool, err := d.Registry.Get(plan.TargetConnID, plan.TargetDB)
-			if err != nil {
-				writeErr(w, http.StatusBadRequest, err)
-				return
+			poolFor := func(database string) (*sql.DB, error) {
+				return d.Registry.Get(plan.TargetConnID, database)
 			}
-			res, err := deploy.Execute(req.Context(), pool, plan)
+			res, err := deploy.Execute(req.Context(), poolFor, plan)
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return

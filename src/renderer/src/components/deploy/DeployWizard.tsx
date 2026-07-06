@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 import Editor from '@monaco-editor/react'
 import { deployApi, type DeployPlan, type DeployResult } from '../../api/deploy'
 import { useConnections } from '../../state/connectionsStore'
-import { useExplorer } from '../../state/explorerStore'
 import { useGit } from '../../state/gitStore'
 
 /**
@@ -12,11 +11,9 @@ import { useGit } from '../../state/gitStore'
 export default function DeployWizard({ onClose }: { onClose: () => void }): React.JSX.Element {
   const git = useGit()
   const profiles = useConnections((s) => s.profiles)
-  const explorer = useExplorer()
 
   const [ref, setRef] = useState(git.info.branch ?? '')
   const [connId, setConnId] = useState('')
-  const [database, setDatabase] = useState('')
   const [plan, setPlan] = useState<DeployPlan | null>(null)
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [previewPath, setPreviewPath] = useState<string | null>(null)
@@ -24,21 +21,20 @@ export default function DeployWizard({ onClose }: { onClose: () => void }): Reac
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  const databases = connId ? explorer.databases[connId] : undefined
   const steps = plan?.steps ?? []
   const previewStep = steps.find((s) => s.path === previewPath)
 
   const targetLabel = useMemo(() => {
     const p = profiles.find((x) => x.id === connId)
-    return p ? `${p.name} / ${database}` : ''
-  }, [profiles, connId, database])
+    return p ? p.name : ''
+  }, [profiles, connId])
 
   const buildPlan = async (): Promise<void> => {
     setBusy(true)
     setError('')
     setResult(null)
     try {
-      const pl = await deployApi.plan(ref, [], connId, database)
+      const pl = await deployApi.plan(ref, [], connId)
       setPlan(pl)
       setChecked(new Set((pl.steps ?? []).map((s) => s.path)))
       setPreviewPath(pl.steps?.[0]?.path ?? null)
@@ -56,7 +52,7 @@ export default function DeployWizard({ onClose }: { onClose: () => void }): Reac
     setError('')
     try {
       // re-plan with only the selected objects so the backend executes exactly those
-      const finalPlan = await deployApi.plan(plan.ref, selectedPaths, plan.targetConnId, plan.targetDb)
+      const finalPlan = await deployApi.plan(plan.ref, selectedPaths, plan.targetConnId)
       const res = await deployApi.execute(finalPlan.id)
       setResult(res)
     } catch (err) {
@@ -91,15 +87,8 @@ export default function DeployWizard({ onClose }: { onClose: () => void }): Reac
               </option>
             ))}
           </select>
-          <span>to</span>
-          <select
-            value={connId}
-            onChange={(e) => {
-              setConnId(e.target.value)
-              setDatabase('')
-              if (e.target.value) void explorer.loadDatabases(e.target.value)
-            }}
-          >
+          <span>to server</span>
+          <select value={connId} onChange={(e) => setConnId(e.target.value)}>
             <option value="">(target connection)</option>
             {profiles.map((p) => (
               <option key={p.id} value={p.id}>
@@ -107,15 +96,10 @@ export default function DeployWizard({ onClose }: { onClose: () => void }): Reac
               </option>
             ))}
           </select>
-          <select value={database} onChange={(e) => setDatabase(e.target.value)} disabled={!connId}>
-            <option value="">(target database)</option>
-            {(databases ?? []).map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </select>
-          <button className="primary" disabled={!ref || !connId || !database || busy} onClick={() => void buildPlan()}>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+            each object deploys into its own database on the target
+          </span>
+          <button className="primary" disabled={!ref || !connId || busy} onClick={() => void buildPlan()}>
             {busy && !plan ? 'Planning…' : 'Build Plan'}
           </button>
         </div>
@@ -157,6 +141,7 @@ export default function DeployWizard({ onClose }: { onClose: () => void }): Reac
                 />
                 <span style={{ color: 'var(--text-dim)', width: 42, fontSize: 10, textTransform: 'uppercase' }}>{s.type}</span>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ color: 'var(--text-dim)' }}>{s.database}.</span>
                   {s.schema}.{s.name}
                 </span>
               </div>
@@ -177,7 +162,8 @@ export default function DeployWizard({ onClose }: { onClose: () => void }): Reac
                 </h3>
                 {(result.steps ?? []).map((s) => (
                   <div key={s.path} style={{ padding: '3px 0', color: s.ok ? 'var(--text)' : 'var(--error)' }}>
-                    {s.ok ? '✓' : '✗'} {s.object}
+                    {s.ok ? '✓' : '✗'} <span style={{ color: 'var(--text-dim)' }}>{s.database}.</span>
+                    {s.object}
                     {s.error && <div style={{ fontSize: 12, paddingLeft: 18, fontFamily: 'var(--font-mono)' }}>{s.error}</div>}
                   </div>
                 ))}

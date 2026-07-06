@@ -13,19 +13,21 @@ import (
 
 // Step is one object deployment within a plan.
 type Step struct {
-	Path   string `json:"path"`
-	Schema string `json:"schema"`
-	Name   string `json:"name"`
-	Type   string `json:"type"`
-	SQL    string `json:"sql"`
+	Path     string `json:"path"`
+	Database string `json:"database"`
+	Schema   string `json:"schema"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	SQL      string `json:"sql"`
 }
 
 // Plan is a prepared deployment: ordered scripts read from a git ref.
+// Each object deploys to its own database name on the target connection
+// (a system repo can span Hospital, Pharmacy, … on one server).
 type Plan struct {
 	ID           string   `json:"id"`
 	Ref          string   `json:"ref"`
 	TargetConnID string   `json:"targetConnId"`
-	TargetDB     string   `json:"targetDb"`
 	Steps        []Step   `json:"steps"`
 	Warnings     []string `json:"warnings"`
 }
@@ -53,7 +55,7 @@ func NewPlanner(repo *gitrepo.Manager) *Planner {
 
 // BuildPlan reads the requested object files at ref and orders them for
 // deployment. paths empty = all deployable objects in the manifest at ref.
-func (p *Planner) BuildPlan(ref string, paths []string, targetConnID, targetDB string) (*Plan, error) {
+func (p *Planner) BuildPlan(ref string, paths []string, targetConnID string) (*Plan, error) {
 	manifest, err := p.manifestAt(ref)
 	if err != nil {
 		return nil, err
@@ -63,7 +65,6 @@ func (p *Planner) BuildPlan(ref string, paths []string, targetConnID, targetDB s
 		ID:           uuid.NewString(),
 		Ref:          ref,
 		TargetConnID: targetConnID,
-		TargetDB:     targetDB,
 	}
 
 	selected := paths
@@ -93,15 +94,19 @@ func (p *Planner) BuildPlan(ref string, paths []string, targetConnID, targetDB s
 			plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s does not start with CREATE OR ALTER — deployed as-is, may fail if the object exists", path))
 		}
 		plan.Steps = append(plan.Steps, Step{
-			Path:   path,
-			Schema: obj.Schema,
-			Name:   obj.Name,
-			Type:   obj.Type,
-			SQL:    sql,
+			Path:     path,
+			Database: obj.Database,
+			Schema:   obj.Schema,
+			Name:     obj.Name,
+			Type:     obj.Type,
+			SQL:      sql,
 		})
 	}
 
 	sort.SliceStable(plan.Steps, func(i, j int) bool {
+		if plan.Steps[i].Database != plan.Steps[j].Database {
+			return plan.Steps[i].Database < plan.Steps[j].Database
+		}
 		return typeOrder[plan.Steps[i].Type] < typeOrder[plan.Steps[j].Type]
 	})
 

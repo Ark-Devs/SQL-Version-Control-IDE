@@ -15,6 +15,7 @@ import (
 	"svcide/internal/deploy"
 	"svcide/internal/gitrepo"
 	"svcide/internal/httpapi"
+	"svcide/internal/settings"
 )
 
 // New builds the API router. Closing shutdownCh (via /api/shutdown) tells
@@ -24,6 +25,10 @@ func New(token string, shutdownCh chan struct{}) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("init profile store: %w", err)
 	}
+	settingsStore, err := settings.NewStore()
+	if err != nil {
+		return nil, fmt.Errorf("init settings store: %w", err)
+	}
 	repo := gitrepo.NewManager()
 	deps := &httpapi.Deps{
 		Store:    store,
@@ -32,6 +37,7 @@ func New(token string, shutdownCh chan struct{}) (http.Handler, error) {
 		Repo:     repo,
 		Planner:  deploy.NewPlanner(repo),
 		AcCache:  db.NewAcCache(),
+		Settings: settingsStore,
 	}
 
 	r := chi.NewRouter()

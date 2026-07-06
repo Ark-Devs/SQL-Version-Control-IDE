@@ -6,11 +6,14 @@ export interface RepoInfo {
   branch?: string
   manifest?: {
     sourceServer: string
-    sourceDatabase: string
     sourceConnId: string
-    objects: Record<string, { schema: string; name: string; type: string }>
+    databases: string[]
+    objects: Record<string, { database: string; schema: string; name: string; type: string }>
   }
 }
+
+/** "schema.name" → drift status vs the repo */
+export type DriftReport = Record<string, 'new' | 'modified'>
 
 export interface FileChange {
   path: string
@@ -53,10 +56,12 @@ const enc = encodeURIComponent
 
 export const gitApi = {
   info: () => get<RepoInfo>('/repo/info'),
-  init: (path: string, connId: string, database: string) =>
-    post<RepoInfo>('/repo/init', { path, connId, database }),
+  init: (path: string, connId: string, databases: string[]) =>
+    post<RepoInfo>('/repo/init', { path, connId, databases }),
   open: (path: string) => post<RepoInfo>('/repo/open', { path }),
   sync: () => post<SyncResult>('/repo/sync', {}),
+  drift: (connId: string, db: string) =>
+    get<DriftReport>(`/repo/drift/${enc(connId)}/${enc(db)}`),
   changes: () => get<FileChange[] | null>('/repo/changes'),
   commit: (message: string, paths: string[]) =>
     post<{ hash: string }>('/repo/commit', { message, paths }),

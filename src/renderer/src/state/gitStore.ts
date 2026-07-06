@@ -1,17 +1,27 @@
 import { create } from 'zustand'
-import { gitApi, type BranchInfo, type FileChange, type MergeConflict, type RepoInfo } from '../api/git'
+import {
+  gitApi,
+  type BranchInfo,
+  type DriftReport,
+  type FileChange,
+  type MergeConflict,
+  type RepoInfo
+} from '../api/git'
 
 interface GitState {
   info: RepoInfo
   changes: FileChange[]
   branches: BranchInfo[]
   conflicts: MergeConflict[] | null
+  /** "connId|db" → drift report powering explorer badges */
+  drift: Record<string, DriftReport>
   busy: string | null
   error: string
 
   refresh: () => Promise<void>
+  loadDrift: (connId: string, db: string) => Promise<void>
   openRepo: (path: string) => Promise<void>
-  initRepo: (path: string, connId: string, database: string) => Promise<void>
+  initRepo: (path: string, connId: string, databases: string[]) => Promise<void>
   sync: () => Promise<string>
   commit: (message: string, paths: string[]) => Promise<void>
   discard: (paths: string[]) => Promise<void>
@@ -50,10 +60,21 @@ export const useGit = create<GitState>((set, get) => {
     changes: [],
     branches: [],
     conflicts: null,
+    drift: {},
     busy: null,
     error: '',
 
     refresh: () => wrap('refresh', reload),
+
+    // fire-and-forget from the explorer; scripts the DB server-side, so no spinner
+    loadDrift: async (connId, db) => {
+      try {
+        const report = await gitApi.drift(connId, db)
+        set((s) => ({ drift: { ...s.drift, [`${connId}|${db}`]: report ?? {} } }))
+      } catch {
+        /* repo may not be open or db not tracked — no badges then */
+      }
+    },
 
     openRepo: (path) =>
       wrap('open', async () => {
@@ -61,15 +82,16 @@ export const useGit = create<GitState>((set, get) => {
         await reload()
       }),
 
-    initRepo: (path, connId, database) =>
+    initRepo: (path, connId, databases) =>
       wrap('init', async () => {
-        await gitApi.init(path, connId, database)
+        await gitApi.init(path, connId, databases)
         await reload()
       }),
 
     sync: () =>
       wrap('sync', async () => {
         const res = await gitApi.sync()
+        set({ drift: {} }) // worktree now matches the DBs — badges must recompute
         await reload()
         let msg = `Synced: ${res.written} written, ${res.deleted} removed`
         if (res.encrypted?.length) msg += `, ${res.encrypted.length} encrypted skipped`

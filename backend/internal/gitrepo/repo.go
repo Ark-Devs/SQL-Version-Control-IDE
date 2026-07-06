@@ -39,12 +39,14 @@ func (m *Manager) Open(path string) error {
 }
 
 // Init creates a new repository at path (creating the directory if needed)
-// with an initial commit so branches have a base.
+// with "main" as the baseline branch.
 func (m *Manager) Init(path string) error {
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return err
 	}
-	repo, err := git.PlainInit(path, false)
+	repo, err := git.PlainInitWithOptions(path, &git.PlainInitOptions{
+		InitOptions: git.InitOptions{DefaultBranch: plumbing.Main},
+	})
 	if err != nil {
 		return err
 	}

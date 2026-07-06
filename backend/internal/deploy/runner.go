@@ -14,27 +14,71 @@ import (
 
 // StepResult is the outcome of one object deployment.
 type StepResult struct {
-	Path   string `json:"path"`
-	Object string `json:"object"`
-	OK     bool   `json:"ok"`
-	Error  string `json:"error,omitempty"`
+	Path     string `json:"path"`
+	Database string `json:"database"`
+	Object   string `json:"object"`
+	OK       bool   `json:"ok"`
+	Error    string `json:"error,omitempty"`
 }
 
-// Result is the outcome of executing a plan.
+// Result is the outcome of executing a plan. Each database group runs in its
+// own transaction: a failing group rolls back without affecting the others.
 type Result struct {
-	Committed bool         `json:"committed"`
+	Committed bool         `json:"committed"` // every group committed
 	Steps     []StepResult `json:"steps"`
 	Error     string       `json:"error,omitempty"`
 	ElapsedMs int64        `json:"elapsedMs"`
 }
 
-// Execute runs a plan inside one transaction on a dedicated connection.
-// Failed steps get one retry pass (dependency order); any remaining failure
-// rolls everything back.
-func Execute(ctx context.Context, pool *sql.DB, plan *Plan) (*Result, error) {
-	start := time.Now()
-	res := &Result{}
+// PoolFunc resolves a database name to a pool on the target connection.
+type PoolFunc func(database string) (*sql.DB, error)
 
+// Execute runs a plan. Steps are grouped by database; each group executes on
+// a dedicated connection inside one transaction with a single retry pass for
+// dependency-ordering failures.
+func Execute(ctx context.Context, poolFor PoolFunc, plan *Plan) (*Result, error) {
+	start := time.Now()
+	res := &Result{Committed: true}
+
+	// group steps by database, preserving plan order
+	groups := map[string][]Step{}
+	var dbOrder []string
+	for _, s := range plan.Steps {
+		if _, ok := groups[s.Database]; !ok {
+			dbOrder = append(dbOrder, s.Database)
+		}
+		groups[s.Database] = append(groups[s.Database], s)
+	}
+
+	var failedGroups []string
+	for _, database := range dbOrder {
+		stepResults, err := executeGroup(ctx, poolFor, database, groups[database])
+		if err != nil {
+			return nil, err
+		}
+		res.Steps = append(res.Steps, stepResults...)
+		for _, sr := range stepResults {
+			if !sr.OK {
+				res.Committed = false
+				failedGroups = append(failedGroups, database)
+				break
+			}
+		}
+	}
+	if len(failedGroups) > 0 {
+		res.Error = fmt.Sprintf("rolled back: %v — other databases were committed", failedGroups)
+	}
+	res.ElapsedMs = time.Since(start).Milliseconds()
+
+	recordHistory(plan, res)
+	return res, nil
+}
+
+func executeGroup(ctx context.Context, poolFor PoolFunc, database string, steps []Step) ([]StepResult, error) {
+	pool, err := poolFor(database)
+	if err != nil {
+		return nil, fmt.Errorf("connect to %s: %w", database, err)
+	}
 	conn, err := pool.Conn(ctx)
 	if err != nil {
 		return nil, err
@@ -42,11 +86,22 @@ func Execute(ctx context.Context, pool *sql.DB, plan *Plan) (*Result, error) {
 	defer conn.Close()
 
 	if _, err := conn.ExecContext(ctx, "SET XACT_ABORT OFF; BEGIN TRANSACTION"); err != nil {
-		return nil, fmt.Errorf("begin transaction: %w", err)
+		return nil, fmt.Errorf("begin transaction on %s: %w", database, err)
 	}
-
 	rollback := func() {
 		_, _ = conn.ExecContext(context.Background(), "IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION")
+	}
+
+	results := make([]StepResult, len(steps))
+	runStep := func(s Step, idx int) bool {
+		for _, batch := range dbpkg.SplitBatches(s.SQL) {
+			if _, err := conn.ExecContext(ctx, batch); err != nil {
+				results[idx] = StepResult{Path: s.Path, Database: database, Object: s.Schema + "." + s.Name, OK: false, Error: err.Error()}
+				return false
+			}
+		}
+		results[idx] = StepResult{Path: s.Path, Database: database, Object: s.Schema + "." + s.Name, OK: true}
+		return true
 	}
 
 	type pending struct {
@@ -54,20 +109,7 @@ func Execute(ctx context.Context, pool *sql.DB, plan *Plan) (*Result, error) {
 		idx  int
 	}
 	var failed []pending
-	results := make([]StepResult, len(plan.Steps))
-
-	runStep := func(s Step, idx int) bool {
-		for _, batch := range dbpkg.SplitBatches(s.SQL) {
-			if _, err := conn.ExecContext(ctx, batch); err != nil {
-				results[idx] = StepResult{Path: s.Path, Object: s.Schema + "." + s.Name, OK: false, Error: err.Error()}
-				return false
-			}
-		}
-		results[idx] = StepResult{Path: s.Path, Object: s.Schema + "." + s.Name, OK: true}
-		return true
-	}
-
-	for i, s := range plan.Steps {
+	for i, s := range steps {
 		if ctx.Err() != nil {
 			rollback()
 			return nil, ctx.Err()
@@ -77,36 +119,26 @@ func Execute(ctx context.Context, pool *sql.DB, plan *Plan) (*Result, error) {
 		}
 	}
 	// retry pass: earlier failures may have been dependency ordering issues
-	var stillFailed []pending
+	anyFailed := false
 	for _, f := range failed {
 		if !runStep(f.step, f.idx) {
-			stillFailed = append(stillFailed, f)
+			anyFailed = true
 		}
 	}
 
-	res.Steps = results
-	if len(stillFailed) > 0 {
+	if anyFailed {
 		rollback()
-		res.Committed = false
-		res.Error = fmt.Sprintf("%d object(s) failed — all changes rolled back", len(stillFailed))
-	} else {
-		if _, err := conn.ExecContext(ctx, "COMMIT TRANSACTION"); err != nil {
-			rollback()
-			return nil, fmt.Errorf("commit: %w", err)
-		}
-		res.Committed = true
+	} else if _, err := conn.ExecContext(ctx, "COMMIT TRANSACTION"); err != nil {
+		rollback()
+		return nil, fmt.Errorf("commit on %s: %w", database, err)
 	}
-	res.ElapsedMs = time.Since(start).Milliseconds()
-
-	recordHistory(plan, res)
-	return res, nil
+	return results, nil
 }
 
 // historyEntry is one line in %APPDATA%\SqlVcIde\deploy-history.json.
 type historyEntry struct {
 	When      string       `json:"when"`
 	Ref       string       `json:"ref"`
-	TargetDB  string       `json:"targetDb"`
 	Committed bool         `json:"committed"`
 	Steps     []StepResult `json:"steps"`
 }
@@ -124,7 +156,6 @@ func recordHistory(plan *Plan, res *Result) {
 	entries = append(entries, historyEntry{
 		When:      time.Now().Format(time.RFC3339),
 		Ref:       plan.Ref,
-		TargetDB:  plan.TargetDB,
 		Committed: res.Committed,
 		Steps:     res.Steps,
 	})
