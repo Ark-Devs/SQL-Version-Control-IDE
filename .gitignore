@@ -1,0 +1,10 @@
+node_modules/
+out/
+dist/
+release/
+backend/bin/
+*.log
+.DS_Store
+.env
+.vscode/*
+!.vscode/extensions.json

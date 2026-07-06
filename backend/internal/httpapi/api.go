@@ -1,0 +1,39 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+
+	"svcide/internal/conn"
+	"svcide/internal/db"
+)
+
+// Deps carries shared services into the HTTP handlers.
+type Deps struct {
+	Store    *conn.Store
+	Registry *conn.Registry
+	Execs    *db.Manager
+}
+
+// Mount attaches all API routes under /api.
+func Mount(r chi.Router, d *Deps) {
+	mountConnections(r, d)
+	mountExplorer(r, d)
+	mountQuery(r, d)
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeErr(w http.ResponseWriter, status int, err error) {
+	writeJSON(w, status, map[string]string{"error": err.Error()})
+}
+
+func decode(r *http.Request, v any) error {
+	return json.NewDecoder(r.Body).Decode(v)
+}

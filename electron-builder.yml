@@ -1,0 +1,23 @@
+appId: com.21ccare.sqlvcide
+productName: SQL Version Control IDE
+directories:
+  buildResources: build
+  output: release
+files:
+  - out/**/*
+  - package.json
+extraResources:
+  - from: backend/bin/
+    to: backend/
+    filter:
+      - svcide-backend.exe
+win:
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  shortcutName: SQL VC IDE
+electronDownload:
+  cache: .electron-cache
+npmRebuild: false
