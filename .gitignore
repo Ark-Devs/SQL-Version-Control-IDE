@@ -9,3 +9,4 @@ backend/bin/
 .vscode/*
 !.vscode/extensions.json
 tsconfig.*.tsbuildinfo
+.electron-cache/
