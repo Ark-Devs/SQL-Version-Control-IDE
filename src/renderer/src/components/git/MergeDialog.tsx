@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { GitMerge, X } from 'lucide-react'
 import { DiffEditor } from '@monaco-editor/react'
 import { useGit } from '../../state/gitStore'
 
@@ -43,7 +44,7 @@ export default function MergeDialog({ onClose }: { onClose: () => void }): React
 
   return (
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'grid', placeItems: 'center', zIndex: 900 }}
+      className="modal-overlay"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !conflicts) onClose()
       }}
@@ -53,16 +54,19 @@ export default function MergeDialog({ onClose }: { onClose: () => void }): React
           width: preview ? '90vw' : 560,
           maxHeight: '85vh',
           background: 'var(--bg-panel)',
-          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)',
+          boxShadow: 'var(--shadow-modal)',
           display: 'flex',
           flexDirection: 'column'
         }}
       >
-        <div style={{ padding: '8px 14px', background: 'var(--bg-titlebar)', fontWeight: 600, display: 'flex', justifyContent: 'space-between' }}>
-          <span>Merge into {current}</span>
-          <span style={{ cursor: 'pointer' }} onClick={onClose}>
-            ✕
+        <div className="modal-header">
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <GitMerge size={15} /> Merge into {current}
           </span>
+          <button className="icon" onClick={onClose} title="Close">
+            <X size={15} />
+          </button>
         </div>
 
         <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10, overflow: 'auto' }}>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ChevronRight, LogIn, Upload, Download } from 'lucide-react'
 import { gitApi } from '../../api/git'
 import { githubApi, type GitHubUser } from '../../api/github'
 import { useGit } from '../../state/gitStore'
@@ -91,7 +92,8 @@ export default function RemoteSection(): React.JSX.Element {
         onClick={() => setExpanded((e) => !e)}
         style={{ padding: '6px 10px', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-dim)', cursor: 'pointer' }}
       >
-        {expanded ? '▼' : '▶'} Remote (GitHub / Azure DevOps)
+        <ChevronRight size={12} style={{ transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.12s' }} />{' '}
+        Remote (GitHub / Azure DevOps)
       </div>
       {expanded && (
         <div style={{ padding: '0 10px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -112,7 +114,7 @@ export default function RemoteSection(): React.JSX.Element {
             ) : (
               <>
                 <button disabled={ghBusy} onClick={ghSignIn}>
-                  Sign in with GitHub
+                  <LogIn size={14} /> Sign in with GitHub
                 </button>
                 {ghShowInput && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -184,7 +186,7 @@ export default function RemoteSection(): React.JSX.Element {
                 })
               }
             >
-              {busy === 'push' ? 'Pushing…' : '↑ Push'}
+              <Upload size={13} /> {busy === 'push' ? 'Pushing…' : 'Push'}
             </button>
             <button
               style={{ flex: 1 }}
@@ -200,7 +202,7 @@ export default function RemoteSection(): React.JSX.Element {
                 })
               }
             >
-              {busy === 'pull' ? 'Pulling…' : '↓ Pull'}
+              <Download size={13} /> {busy === 'pull' ? 'Pulling…' : 'Pull'}
             </button>
           </div>
           {msg && <div style={{ fontSize: 11, color: 'var(--success)' }}>{msg}</div>}

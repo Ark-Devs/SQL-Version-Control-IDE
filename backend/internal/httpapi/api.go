@@ -35,6 +35,7 @@ func Mount(r chi.Router, d *Deps) {
 	mountRemote(r, d)
 	mountExport(r, d)
 	mountGitHub(r, d)
+	mountSearch(r, d)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

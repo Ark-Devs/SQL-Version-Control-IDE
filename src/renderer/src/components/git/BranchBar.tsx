@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Check, GitBranch } from 'lucide-react'
 import { useGit } from '../../state/gitStore'
 
 /** Branch indicator + switcher that lives in the status bar. */
@@ -14,10 +15,18 @@ export default function BranchBar(): React.JSX.Element | null {
     <span style={{ position: 'relative' }}>
       <span
         onClick={() => setOpen((o) => !o)}
-        style={{ padding: '0 10px', cursor: 'pointer', borderRight: '1px solid rgba(255,255,255,0.25)' }}
+        style={{
+          padding: '0 10px',
+          cursor: 'pointer',
+          borderRight: '1px solid rgba(255,255,255,0.2)',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 5,
+          height: '100%'
+        }}
         title="Switch branch"
       >
-        ⑂ {current}
+        <GitBranch size={12} /> {current}
       </span>
       {open && (
         <div
@@ -53,7 +62,7 @@ export default function BranchBar(): React.JSX.Element | null {
               onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'var(--bg-selected)')}
               onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
             >
-              {b.current ? '✓ ' : ''}
+              {b.current ? <Check size={12} style={{ marginRight: 4, verticalAlign: -1 }} /> : null}
               {b.name}
             </div>
           ))}

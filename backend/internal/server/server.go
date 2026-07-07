@@ -44,7 +44,7 @@ func New(token string, shutdownCh chan struct{}) (http.Handler, error) {
 	r.Use(bearerAuth(token))
 
 	r.Get("/api/meta/health", func(w http.ResponseWriter, _ *http.Request) {
-		WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": "0.1.2"})
+		WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": "0.2.0"})
 	})
 
 	httpapi.Mount(r, deps)

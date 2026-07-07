@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Check, Download, FolderOpen, GitMerge, RefreshCw, Rocket } from 'lucide-react'
 import { useGit } from '../../state/gitStore'
 import { useConnections } from '../../state/connectionsStore'
 import { useExplorer } from '../../state/explorerStore'
@@ -96,7 +97,7 @@ export default function GitPanel(): React.JSX.Element {
           onClick={() => setShowExport(true)}
           title="Script procs/functions/views into your application project's sql/ folder"
         >
-          ⇩ Export to Code…
+          <Download size={14} /> Export to Code…
         </button>
         {git.error && <div style={{ color: 'var(--error)', fontSize: 12, userSelect: 'text' }}>{git.error}</div>}
         {showExport && <ExportDialog onClose={() => setShowExport(false)} />}
@@ -126,34 +127,36 @@ export default function GitPanel(): React.JSX.Element {
             }}
             title="Script all objects from the source database into the repo working tree"
           >
-            {git.busy === 'sync' ? 'Syncing…' : '⟳ Sync from Database'}
+            <RefreshCw size={13} className={git.busy === 'sync' ? 'spin' : undefined} />
+            {git.busy === 'sync' ? 'Syncing…' : 'Sync from Database'}
           </button>
-          <button disabled={git.busy !== null} onClick={() => void git.refresh()} title="Refresh status">
-            ↻
+          <button className="icon" disabled={git.busy !== null} onClick={() => void git.refresh()} title="Refresh status">
+            <RefreshCw size={14} />
           </button>
           <button disabled={git.busy !== null} onClick={() => setShowMerge(true)} title="Merge another branch into the current one">
-            ⑃ Merge…
+            <GitMerge size={13} /> Merge…
           </button>
         </div>
         <button
+          className="primary"
           disabled={git.busy !== null}
           onClick={() => setShowDeploy(true)}
           title="Deploy a branch's objects to any server (CREATE OR ALTER in a transaction)"
         >
-          🚀 Deploy…
+          <Rocket size={13} /> Deploy…
         </button>
         <button
           disabled={git.busy !== null}
           onClick={() => setShowExport(true)}
           title="Script procs/functions/views into your application project's sql/ folder"
         >
-          ⇩ Export to Code…
+          <Download size={13} /> Export to Code…
         </button>
         {statusMsg && <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{statusMsg}</div>}
         {git.error && <div style={{ fontSize: 11, color: 'var(--error)', userSelect: 'text' }}>{git.error}</div>}
       </div>
 
-      <div style={{ padding: '6px 10px', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-dim)' }}>
+      <div className="section-label" style={{ padding: '8px 10px 4px' }}>
         Changes ({git.changes.length})
       </div>
 
@@ -221,7 +224,8 @@ export default function GitPanel(): React.JSX.Element {
             }
           }}
         >
-          {git.busy === 'commit' ? 'Committing…' : `✓ Commit ${selected.size} file(s)`}
+          <Check size={14} />
+          {git.busy === 'commit' ? 'Committing…' : `Commit ${selected.size} file(s)`}
         </button>
       </div>
 

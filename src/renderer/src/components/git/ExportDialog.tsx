@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { Download, FolderOpen, Loader2, TriangleAlert } from 'lucide-react'
+import Modal from '../common/Modal'
 import { exporterApi, type ExportFile, type ExportResult } from '../../api/exporter'
 import { useConnections } from '../../state/connectionsStore'
 import { useExplorer } from '../../state/explorerStore'
@@ -63,115 +65,102 @@ export default function ExportDialog({ onClose }: { onClose: () => void }): Reac
   const unchanged = files.filter((f) => f.status === 'unchanged')
 
   return (
-    <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'grid', placeItems: 'center', zIndex: 900 }}
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget && !busy) onClose()
-      }}
-    >
-      <div style={{ width: 560, maxHeight: '80vh', background: 'var(--bg-panel)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: '8px 14px', background: 'var(--bg-titlebar)', fontWeight: 600, display: 'flex', justifyContent: 'space-between' }}>
-          <span>Export Database → Code</span>
-          <span style={{ cursor: 'pointer' }} onClick={() => !busy && onClose()}>
-            ✕
-          </span>
-        </div>
-
-        <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10, overflow: 'auto', flex: 1 }}>
-          <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
-            Tip: choose your application project folder — the files land in a sql/ subfolder and your existing GitHub
-            repo tracks the changes.
-          </div>
-
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <input readOnly value={folder} placeholder="(choose a folder)" style={{ flex: 1, fontSize: 12 }} title={folder} />
-            <button disabled={busy} onClick={() => void chooseFolder()}>
-              Browse…
-            </button>
-          </div>
-
-          <select value={connId} onChange={(e) => chooseConn(e.target.value)} disabled={busy}>
-            <option value="">(choose connection)</option>
-            {profiles.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-
-          {connId && (
-            <div style={{ maxHeight: 160, overflow: 'auto', border: '1px solid var(--border)', padding: 4 }}>
-              {(databases ?? [])
-                .filter((d) => !SYSTEM_DBS.includes(d))
-                .map((d) => (
-                  <label key={d} style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '2px 4px', fontSize: 12, cursor: 'pointer' }}>
-                    <input type="checkbox" checked={selected.has(d)} onChange={() => toggleDb(d)} disabled={busy} />
-                    {d}
-                  </label>
-                ))}
-              {databases === null && <div style={{ padding: 4, color: 'var(--text-dim)', fontSize: 12 }}>Loading…</div>}
-              {databases === undefined && (
-                <div style={{ padding: 4, color: 'var(--text-dim)', fontSize: 12 }}>No databases loaded.</div>
-              )}
-            </div>
-          )}
-
-          {result && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
-              <div style={{ fontSize: 12, fontWeight: 600 }}>
-                {added.length} added, {updated.length} updated, {unchanged.length} unchanged
-              </div>
-              <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid var(--border)', padding: 4 }}>
-                {added.map((f) => (
-                  <FileRow key={f.path} f={f} color="var(--success)" letter="A" />
-                ))}
-                {updated.map((f) => (
-                  <FileRow key={f.path} f={f} color="var(--warning)" letter="M" />
-                ))}
-                {unchanged.length > 0 && (
-                  <div
-                    style={{ fontSize: 11, color: 'var(--text-dim)', cursor: 'pointer', padding: '4px 2px', textDecoration: 'underline' }}
-                    onClick={() => setShowUnchanged((s) => !s)}
-                  >
-                    {showUnchanged ? 'Hide unchanged' : `Show unchanged (${unchanged.length})`}
-                  </div>
-                )}
-                {showUnchanged && unchanged.map((f) => <FileRow key={f.path} f={f} color="var(--text-dim)" letter="=" />)}
-              </div>
-              {(result.skippedEncrypted?.length ?? 0) > 0 && (
-                <div style={{ fontSize: 11, color: 'var(--warning)' }}>
-                  Skipped (encrypted): {result.skippedEncrypted!.join(', ')}
-                </div>
-              )}
-              {(result.warnings?.length ?? 0) > 0 && (
-                <div style={{ fontSize: 11, color: 'var(--warning)' }}>
-                  {result.warnings!.map((w, i) => (
-                    <div key={i}>⚠ {w}</div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {error && <div style={{ fontSize: 12, color: 'var(--error)', userSelect: 'text' }}>{error}</div>}
-        </div>
-
-        <div style={{ padding: 10, borderTop: '1px solid var(--border)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+    <Modal
+      title="Export Database → Code"
+      width={560}
+      onClose={onClose}
+      locked={busy}
+      footer={
+        <>
           <button onClick={onClose} disabled={busy}>
             Close
           </button>
           <button className="primary" disabled={!folder || !connId || selected.size === 0 || busy} onClick={() => void runExport()}>
+            {busy ? <Loader2 size={14} className="spin" /> : <Download size={14} />}
             {busy ? 'Exporting…' : 'Export'}
           </button>
-        </div>
+        </>
+      }
+    >
+      <div className="hint">
+        Tip: choose your application project folder — the files land in a <b>sql/</b> subfolder and your existing
+        GitHub repo tracks the changes.
       </div>
-    </div>
+
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <input readOnly value={folder} placeholder="(choose a folder)" style={{ flex: 1, fontSize: 12 }} title={folder} />
+        <button disabled={busy} onClick={() => void chooseFolder()}>
+          <FolderOpen size={14} />
+          Browse…
+        </button>
+      </div>
+
+      <select value={connId} onChange={(e) => chooseConn(e.target.value)} disabled={busy}>
+        <option value="">(choose connection)</option>
+        {profiles.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </select>
+
+      {connId && (
+        <div style={{ maxHeight: 160, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: 4 }}>
+          {(databases ?? [])
+            .filter((d) => !SYSTEM_DBS.includes(d))
+            .map((d) => (
+              <label key={d} style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '3px 6px', fontSize: 12.5, cursor: 'pointer' }}>
+                <input type="checkbox" checked={selected.has(d)} onChange={() => toggleDb(d)} disabled={busy} />
+                {d}
+              </label>
+            ))}
+          {databases === null && <div className="hint" style={{ padding: 4 }}>Loading…</div>}
+          {databases === undefined && <div className="hint" style={{ padding: 4 }}>No databases loaded.</div>}
+        </div>
+      )}
+
+      {result && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 600 }}>
+            <span style={{ color: 'var(--success)' }}>{added.length} added</span>,{' '}
+            <span style={{ color: 'var(--warning)' }}>{updated.length} updated</span>, {unchanged.length} unchanged
+          </div>
+          <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: 4 }}>
+            {added.map((f) => (
+              <FileRow key={f.path} f={f} color="var(--success)" letter="A" />
+            ))}
+            {updated.map((f) => (
+              <FileRow key={f.path} f={f} color="var(--warning)" letter="M" />
+            ))}
+            {unchanged.length > 0 && (
+              <button className="ghost" style={{ fontSize: 11.5 }} onClick={() => setShowUnchanged((s) => !s)}>
+                {showUnchanged ? 'Hide unchanged' : `Show unchanged (${unchanged.length})`}
+              </button>
+            )}
+            {showUnchanged && unchanged.map((f) => <FileRow key={f.path} f={f} color="var(--text-faint)" letter="=" />)}
+          </div>
+          {(result.skippedEncrypted?.length ?? 0) > 0 && (
+            <div className="hint" style={{ color: 'var(--warning)', display: 'flex', gap: 5, alignItems: 'center' }}>
+              <TriangleAlert size={12} /> Skipped (encrypted): {result.skippedEncrypted!.join(', ')}
+            </div>
+          )}
+          {(result.warnings?.length ?? 0) > 0 &&
+            result.warnings!.map((w, i) => (
+              <div key={i} className="hint" style={{ color: 'var(--warning)', display: 'flex', gap: 5, alignItems: 'center' }}>
+                <TriangleAlert size={12} /> {w}
+              </div>
+            ))}
+        </div>
+      )}
+
+      {error && <div style={{ fontSize: 12, color: 'var(--error)', userSelect: 'text' }}>{error}</div>}
+    </Modal>
   )
 }
 
 function FileRow({ f, color, letter }: { f: ExportFile; color: string; letter: string }): React.JSX.Element {
   return (
-    <div style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '2px 4px', fontSize: 12 }}>
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '2px 6px', fontSize: 11.5, fontFamily: 'var(--font-mono)' }}>
       <span style={{ color, width: 12, fontWeight: 700 }}>{letter}</span>
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.path}>
         {f.path}

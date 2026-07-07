@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import Editor from '@monaco-editor/react'
+import { CheckCircle2, Rocket, TriangleAlert, X, XCircle } from 'lucide-react'
 import { deployApi, type DeployPlan, type DeployResult } from '../../api/deploy'
 import { useConnections } from '../../state/connectionsStore'
 import { useGit } from '../../state/gitStore'
@@ -64,17 +65,19 @@ export default function DeployWizard({ onClose }: { onClose: () => void }): Reac
 
   return (
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'grid', placeItems: 'center', zIndex: 900 }}
+      className="modal-overlay"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !busy) onClose()
       }}
     >
-      <div style={{ width: '88vw', height: '84vh', background: 'var(--bg-panel)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: '8px 14px', background: 'var(--bg-titlebar)', fontWeight: 600, display: 'flex', justifyContent: 'space-between' }}>
-          <span>Deploy database objects</span>
-          <span style={{ cursor: 'pointer' }} onClick={onClose}>
-            ✕
+      <div style={{ width: '88vw', height: '84vh', background: 'var(--bg-panel)', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-modal)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div className="modal-header">
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <Rocket size={15} /> Deploy database objects
           </span>
+          <button className="icon" onClick={onClose} title="Close">
+            <X size={15} />
+          </button>
         </div>
 
         {/* source / target row */}
@@ -109,7 +112,7 @@ export default function DeployWizard({ onClose }: { onClose: () => void }): Reac
           <div style={{ width: 340, borderRight: '1px solid var(--border)', overflow: 'auto', flexShrink: 0 }}>
             {plan?.warnings?.map((wrn, i) => (
               <div key={i} style={{ padding: '4px 10px', color: 'var(--warning)', fontSize: 11 }}>
-                ⚠ {wrn}
+                <TriangleAlert size={11} style={{ marginRight: 4, verticalAlign: -1 }} />{wrn}
               </div>
             ))}
             {steps.map((s) => (
@@ -157,12 +160,12 @@ export default function DeployWizard({ onClose }: { onClose: () => void }): Reac
               <div style={{ overflow: 'auto', padding: 12, fontSize: 13, userSelect: 'text' }}>
                 <h3 style={{ marginTop: 0, color: result.committed ? 'var(--success)' : 'var(--error)' }}>
                   {result.committed
-                    ? `✓ Deployed to ${targetLabel} in ${(result.elapsedMs / 1000).toFixed(2)}s`
-                    : `✗ Deployment rolled back — ${result.error}`}
+                    ? `Deployed to ${targetLabel} in ${(result.elapsedMs / 1000).toFixed(2)}s`
+                    : `Deployment rolled back — ${result.error}`}
                 </h3>
                 {(result.steps ?? []).map((s) => (
                   <div key={s.path} style={{ padding: '3px 0', color: s.ok ? 'var(--text)' : 'var(--error)' }}>
-                    {s.ok ? '✓' : '✗'} <span style={{ color: 'var(--text-dim)' }}>{s.database}.</span>
+                    {s.ok ? <CheckCircle2 size={13} style={{ verticalAlign: -2, marginRight: 4, color: 'var(--success)' }} /> : <XCircle size={13} style={{ verticalAlign: -2, marginRight: 4, color: 'var(--error)' }} />}<span style={{ color: 'var(--text-dim)' }}>{s.database}.</span>
                     {s.object}
                     {s.error && <div style={{ fontSize: 12, paddingLeft: 18, fontFamily: 'var(--font-mono)' }}>{s.error}</div>}
                   </div>

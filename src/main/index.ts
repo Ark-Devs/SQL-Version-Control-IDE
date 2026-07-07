@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { join } from 'path'
 import { startBackend, stopBackend, getBackendInfo } from './backend'
 import { setupMenu } from './menu'
+import { startUpdateChecker } from './updater'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -49,6 +50,7 @@ app.whenReady().then(async () => {
 
   setupMenu()
   createWindow()
+  startUpdateChecker()
 
   try {
     await startBackend()

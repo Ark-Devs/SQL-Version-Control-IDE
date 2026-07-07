@@ -3,7 +3,9 @@ import { initApi } from './api/client'
 import { useConnections } from './state/connectionsStore'
 import { useSettings } from './state/settingsStore'
 import { useTabs } from './state/tabsStore'
+import { useUi } from './state/uiStore'
 import Shell from './components/layout/Shell'
+import SearchDialog from './components/search/SearchDialog'
 import './components/editor/monacoSetup'
 import { registerSqlCompletions } from './components/editor/completionProvider'
 
@@ -34,6 +36,11 @@ export default function App(): React.JSX.Element {
         e.preventDefault()
         useTabs.getState().openTab()
       }
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        const tab = useTabs.getState().tabs.find((t) => t.id === useTabs.getState().activeId)
+        useUi.getState().openSearch({ connId: tab?.connId, database: tab?.database })
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -54,5 +61,10 @@ export default function App(): React.JSX.Element {
     )
   }
 
-  return <Shell />
+  return (
+    <>
+      <Shell />
+      <SearchDialog />
+    </>
+  )
 }

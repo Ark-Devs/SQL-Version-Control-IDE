@@ -1,8 +1,10 @@
 import { useState } from 'react'
+import { ChevronRight, Plus, Search, X } from 'lucide-react'
 import { useConnections } from '../../state/connectionsStore'
 import { useExplorer } from '../../state/explorerStore'
 import { useGit } from '../../state/gitStore'
 import { useTabs } from '../../state/tabsStore'
+import { useUi } from '../../state/uiStore'
 import { explorerApi } from '../../api/endpoints'
 import type { ObjectInfo, ObjectType, Profile } from '../../api/types'
 import ContextMenu, { MenuItem } from '../common/ContextMenu'
@@ -79,6 +81,7 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
   ): React.JSX.Element => (
     <div
       key={key}
+      className="tree-row"
       onClick={opts.expandable ? opts.onExpand : undefined}
       onDoubleClick={opts.onDoubleClick}
       onContextMenu={(e) => {
@@ -87,20 +90,12 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
       }}
       title={opts.title}
       style={{
-        display: 'flex',
-        alignItems: 'center',
-        padding: '2px 4px',
         paddingLeft: 6 + depth * 14,
-        cursor: 'pointer',
-        whiteSpace: 'nowrap',
-        color: opts.dim ? 'var(--text-dim)' : 'var(--text)',
-        fontSize: 12.5
+        color: opts.dim ? 'var(--text-dim)' : undefined
       }}
-      onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'var(--bg-hover)')}
-      onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
     >
-      <span style={{ width: 12, display: 'inline-block', fontSize: 9, color: 'var(--text-dim)', flexShrink: 0 }}>
-        {opts.expandable ? (isOpen(key) ? '▼' : '▶') : ''}
+      <span className={`chevron${opts.expandable && isOpen(key) ? ' open' : ''}`}>
+        {opts.expandable ? <ChevronRight size={12} /> : null}
       </span>
       {icon}
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
@@ -160,10 +155,21 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
 
     const label = status ? (
       <span
-        style={{ color: status === 'new' ? 'var(--success)' : 'var(--warning)' }}
+        style={{ color: status === 'new' ? 'var(--success)' : 'var(--warning)', display: 'inline-flex', alignItems: 'center' }}
         title={status === 'new' ? 'New — not in the repo baseline' : 'Modified since the repo baseline'}
       >
-        {obj.schema}.{obj.name} ●
+        {obj.schema}.{obj.name}
+        <span
+          style={{
+            display: 'inline-block',
+            width: 7,
+            height: 7,
+            marginLeft: 6,
+            borderRadius: 999,
+            background: 'currentColor',
+            flexShrink: 0
+          }}
+        />
       </span>
     ) : (
       `${obj.schema}.${obj.name}`
@@ -364,10 +370,21 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
 
     const label = status ? (
       <span
-        style={{ color: status === 'new' ? 'var(--success)' : 'var(--warning)' }}
+        style={{ color: status === 'new' ? 'var(--success)' : 'var(--warning)', display: 'inline-flex', alignItems: 'center' }}
         title={status === 'new' ? 'New — not in the repo baseline' : 'Modified since the repo baseline'}
       >
-        {obj.schema}.{obj.name} ●
+        {obj.schema}.{obj.name}
+        <span
+          style={{
+            display: 'inline-block',
+            width: 7,
+            height: 7,
+            marginLeft: 6,
+            borderRadius: 999,
+            background: 'currentColor',
+            flexShrink: 0
+          }}
+        />
       </span>
     ) : (
       `${obj.schema}.${obj.name}`
@@ -430,12 +447,16 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
     let items = objs.filter((o) => o.type === type)
     if (f) items = items.filter((o) => `${o.schema}.${o.name}`.toLowerCase().includes(f))
     if (f && items.length === 0) return null
+    const searchItem: MenuItem = { label: 'Search here…', onClick: () => useUi.getState().openSearch({ connId, database: db }) }
+    const menuItems: MenuItem[] = extraMenu
+      ? [...extraMenu, { separator: true, label: '', onClick: () => undefined }, searchItem]
+      : [searchItem]
     return (
       <div key={folderKey}>
         {row(folderKey, depth, Icons.folder, `${label} (${items.length})`, {
           expandable: true,
           onExpand: () => toggle(folderKey),
-          onContextMenu: extraMenu ? (e) => setMenu({ x: e.clientX, y: e.clientY, items: extraMenu }) : undefined
+          onContextMenu: (e) => setMenu({ x: e.clientX, y: e.clientY, items: menuItems })
         })}
         {(isOpen(folderKey) || f !== '') && items.map((o) => render(o, depth + 1))}
       </div>
@@ -694,6 +715,8 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
               items: [
                 { label: 'New Query', onClick: () => useTabs.getState().openTab({ connId: p.id, database: db }) },
                 ...newObjectItems(p.id, db),
+                { separator: true, label: '', onClick: () => undefined },
+                { label: `Search in ${db}…`, onClick: () => useUi.getState().openSearch({ connId: p.id, database: db }) },
                 {
                   label: 'Refresh',
                   onClick: () => {
@@ -763,22 +786,28 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
           flexShrink: 0
         }}
       >
-        <span style={{ fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 }}>Object Explorer</span>
-        <button title="Add connection" style={{ padding: '1px 8px' }} onClick={onAddConnection}>
-          +
+        <span className="section-label">Object Explorer</span>
+        <button className="icon" title="Add connection" onClick={onAddConnection}>
+          <Plus size={16} />
         </button>
       </div>
       <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 4, flexShrink: 0 }}>
-        <input
-          placeholder="🔍 Filter objects…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          style={{ flex: 1, fontSize: 12, padding: '3px 8px' }}
-          title="Filter tables/views/procs/functions/synonyms by name (within expanded databases)"
-        />
+        <div style={{ position: 'relative', flex: 1 }}>
+          <Search
+            size={13}
+            style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-faint)', pointerEvents: 'none' }}
+          />
+          <input
+            placeholder="Filter objects…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            style={{ width: '100%', fontSize: 12, padding: '3px 8px 3px 26px' }}
+            title="Filter tables/views/procs/functions/synonyms by name (within expanded databases)"
+          />
+        </div>
         {filter && (
-          <button style={{ padding: '1px 8px' }} onClick={() => setFilter('')} title="Clear filter">
-            ✕
+          <button className="icon" onClick={() => setFilter('')} title="Clear filter">
+            <X size={14} />
           </button>
         )}
       </div>

@@ -11,6 +11,7 @@ import GitPanel from '../git/GitPanel'
 import Toolbar from './Toolbar'
 import SettingsDialog from './SettingsDialog'
 import StatusBar from './StatusBar'
+import UpdateBanner from './UpdateBanner'
 import { useTabs } from '../../state/tabsStore'
 import type { Profile } from '../../api/types'
 
@@ -60,10 +61,11 @@ export default function Shell(): React.JSX.Element {
         onManageConnections={() => setDialog({ open: true, editing: null })}
         onOpenSettings={() => setShowSettings(true)}
       />
+      <UpdateBanner />
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div style={{ width: explorerWidth, flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--bg-panel)', borderRight: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', flexShrink: 0, borderBottom: '1px solid var(--border)', background: 'var(--bg-panel-alt)' }}>
             {(['explorer', 'git'] as const).map((t) => (
               <div
                 key={t}
@@ -71,14 +73,15 @@ export default function Shell(): React.JSX.Element {
                 style={{
                   flex: 1,
                   textAlign: 'center',
-                  padding: '6px 0',
+                  padding: '7px 0 6px',
                   cursor: 'pointer',
                   fontSize: 11,
+                  fontWeight: 600,
                   textTransform: 'uppercase',
-                  letterSpacing: 0.5,
-                  background: sidebarTab === t ? 'var(--bg-panel)' : 'var(--bg-panel-alt)',
+                  letterSpacing: 0.6,
                   color: sidebarTab === t ? 'var(--text-bright)' : 'var(--text-dim)',
-                  borderBottom: sidebarTab === t ? '2px solid var(--accent)' : '2px solid transparent'
+                  borderBottom: sidebarTab === t ? '2px solid var(--accent)' : '2px solid transparent',
+                  transition: 'color 0.12s var(--ease)'
                 }}
               >
                 {t === 'explorer' ? 'Explorer' : 'Git'}
@@ -95,7 +98,12 @@ export default function Shell(): React.JSX.Element {
             <GitPanel />
           </div>
         </div>
-        <div onMouseDown={startDrag('explorer')} style={{ width: 4, cursor: 'col-resize', flexShrink: 0, background: 'transparent' }} />
+        <div
+          onMouseDown={startDrag('explorer')}
+          onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'var(--border-strong)')}
+          onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
+          style={{ width: 4, cursor: 'col-resize', flexShrink: 0, background: 'transparent', transition: 'background 0.12s var(--ease)' }}
+        />
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           <EditorTabs />
@@ -117,7 +125,12 @@ export default function Shell(): React.JSX.Element {
           </div>
           {showResults && activeTab?.execution && (
             <>
-              <div onMouseDown={startDrag('results')} style={{ height: 4, cursor: 'row-resize', flexShrink: 0 }} />
+              <div
+                onMouseDown={startDrag('results')}
+                onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = 'var(--border-strong)')}
+                onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = 'transparent')}
+                style={{ height: 4, cursor: 'row-resize', flexShrink: 0, background: 'transparent', transition: 'background 0.12s var(--ease)' }}
+              />
               <div style={{ height: resultsHeight, flexShrink: 0 }}>
                 <ResultsPane
                   snapshot={

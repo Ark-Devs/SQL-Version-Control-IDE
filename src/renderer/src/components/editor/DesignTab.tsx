@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import Editor from '@monaco-editor/react'
+import { Table2 } from 'lucide-react'
 import { explorerApi } from '../../api/endpoints'
 import type { ColumnInfo, IndexInfo, TableConstraintInfo, TableDetail } from '../../api/types'
 import type { Tab } from '../../state/tabsStore'
@@ -67,14 +68,15 @@ export default function DesignTab({ tab }: { tab: Tab }): React.JSX.Element {
           background: 'var(--bg-panel-alt)',
           flexShrink: 0,
           display: 'flex',
-          alignItems: 'baseline',
+          alignItems: 'center',
           gap: 8
         }}
       >
-        <span style={{ fontWeight: 600, fontSize: 13 }}>
+        <Table2 size={14} color="#6ea1d8" style={{ flexShrink: 0 }} />
+        <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-bright)' }}>
           {target.schema}.{target.name}
         </span>
-        <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>{target.database}</span>
+        <span className="badge">{target.database}</span>
       </div>
 
       {error ? (
@@ -155,13 +157,9 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return (
     <div>
       <div
+        className="section-label"
         style={{
-          padding: '4px 10px',
-          fontSize: 11,
-          fontWeight: 600,
-          textTransform: 'uppercase',
-          letterSpacing: 0.5,
-          color: 'var(--text-dim)',
+          padding: '5px 10px',
           background: 'var(--bg-panel-alt)',
           borderTop: '1px solid var(--border)',
           borderBottom: '1px solid var(--border)'
@@ -175,7 +173,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function EmptyRow(): React.JSX.Element {
-  return <div style={{ padding: '4px 10px', fontSize: 12, color: 'var(--text-dim)' }}>(none)</div>
+  return <div style={{ padding: '4px 10px', fontSize: 12, color: 'var(--text-faint)' }}>(none)</div>
 }
 
 function ColumnsGrid({

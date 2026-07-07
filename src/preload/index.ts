@@ -15,6 +15,9 @@ const api = {
   },
   onBackendError: (cb: (err: string) => void): void => {
     ipcRenderer.on('backend:error', (_e, err: string) => cb(err))
+  },
+  onUpdateAvailable: (cb: (info: { version: string; url: string }) => void): void => {
+    ipcRenderer.on('update:available', (_e, info: { version: string; url: string }) => cb(info))
   }
 }
 

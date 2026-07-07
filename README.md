@@ -1,60 +1,91 @@
+<div align="center">
+
 # SQL Version Control IDE
 
-A desktop IDE for Microsoft SQL Server with **built-in Git version control for database objects** — keep different versions of the same stored procedure on branches (e.g. a `test` branch and a `deploy` branch) and deploy any branch to any server.
+**A desktop IDE for Microsoft SQL Server with Git built into its bones.**
 
-Built with Electron + React + Monaco (the VS Code editor) and a Go backend that owns all SQL Server and Git operations.
+Version stored procedures on branches. Diff them. Merge them. Deploy any branch to any server.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Windows-0078d4)
+![Made with Go](https://img.shields.io/badge/backend-Go-00ADD8)
+![Electron](https://img.shields.io/badge/shell-Electron%20%2B%20React-47848F)
+
+</div>
+
+---
+
+## Why
+
+Database code — stored procedures, functions, views — is real code, but it usually lives outside version control, edited live on servers with no history, no review, and no way to keep a *test* version and a *production* version of the same proc. This IDE fixes that:
+
+- Every object is scripted to a `.sql` file in a **real Git repository** the app manages for you.
+- Branches are **free-form**: keep `test` and `deploy` versions of the same SP side by side.
+- **Deploying** = pick a branch, pick a server, review every script, run `CREATE OR ALTER` in a transaction.
+- One repo can track a whole **system across databases** (`Hospital`, `Pharmacy`, …) — matching apps whose procs use cross-database references.
 
 ## Features
 
-- **Object Explorer** — servers → databases → tables (columns, indexes), views, stored procedures, table-valued & scalar functions. Double-click a proc to open its source; double-click a table for `SELECT TOP 1000`.
-- **SQL editor** — Monaco with T-SQL highlighting, SSMS-style dark theme, and schema-aware autocomplete (tables, columns via alias resolution, `EXEC` proc snippets with parameters). **F5** or **Ctrl+E** runs the selection if there is one, otherwise the whole buffer — per-tab connection and database.
-- **Query results** — multiple result sets, virtualized grid (10k rows/set cap), Messages pane with `PRINT`/`RAISERROR`/rowcounts, execution time, and true server-side cancellation.
-- **Git versioning** — one repo per database. *Sync from Database* scripts every object to deterministic `.sql` files (`dbo/StoredProcedures/usp_Foo.sql`…); git status is your drift report. Commit selected objects, create/switch branches, view per-object history, side-by-side Monaco diffs (working vs HEAD, or any commit), file-level merges with a conflict resolver.
-- **Deploy** — pick a branch, pick a target connection + database, review every script, then execute `CREATE OR ALTER` in a single transaction (all-or-nothing, one dependency-retry pass). Tables are tracked for history but never deployed.
-- **Remotes** — push/pull to GitHub or Azure DevOps over HTTPS with a Personal Access Token (stored in Windows Credential Manager).
-- **Security** — connection passwords and PATs live in Windows Credential Manager, never in files. The backend binds to `127.0.0.1` with a per-session bearer token.
+| | |
+|---|---|
+| 🌲 **Deep Object Explorer** | SSMS-style tree: tables (columns/keys/constraints/triggers/indexes), views, synonyms, programmability (procs with parameters, functions, types, sequences, DB triggers), security (users/roles/schemas). Filter box + drift badges. |
+| ✍️ **Monaco SQL editor** | The VS Code editor with T-SQL highlighting, schema-aware autocomplete (tables after `FROM`, columns from aliases, `EXEC` snippets), F5 runs selection-or-buffer, per-tab connection + database. |
+| 📊 **Results** | Multiple result sets, virtualized grid, `PRINT`/error messages, execution time, true server-side cancellation. |
+| 🌿 **Git versioning** | Sync database → repo (idempotent, phantom-diff-free), commit selected objects, branches on `main` baseline, per-object history, side-by-side diffs, file-level merge with conflict resolver, GitHub/Azure DevOps push/pull. |
+| 🚦 **Drift badges** | Green = new object not in the baseline; yellow = modified — even when the object was never synced (via `modify_date` heuristics). |
+| 🚀 **Deploy** | Any branch → any saved connection. Objects ordered by dependency kind, previewed, executed `CREATE OR ALTER` in one transaction per database, all-or-nothing with rollback. |
+| 📦 **Export to Code** | Script procs/functions/views into your application repo's `sql/` folder (`sql/sp`, `sql/table valued functions`, …) — incremental, never deletes, GitHub-style A/M report. |
+| 📝 **Object headers** | SSMS-style `Author / Create date / Description` blocks filled automatically; every `CREATE OR ALTER` execution prompts for an update note appended to the header. |
+| 🎨 **Design view** | Read-only table designer: columns, keys, indexes, constraints + generated `CREATE TABLE`. |
+| 🔎 **Global search** | `Ctrl+Shift+F` searches object names *and definitions* across databases. |
+| 🔐 **Security** | Passwords + tokens in Windows Credential Manager, never on disk. Local-only backend with per-session bearer token. |
+
+## Install
+
+Grab the latest installer from **[Releases](../../releases)** and run it. Unsigned for now — SmartScreen will ask once ("More info" → "Run anyway").
+
+The app checks Releases and shows a banner when a newer version is available.
+
+## Quick start
+
+1. **＋** in Object Explorer → server, auth, and (for a local instance without TCP) *Shared Memory* protocol → Test → Save.
+2. Browse. Double-click a proc for its source, F5 to run queries.
+3. **Git tab** → *New repo from database(s)* → pick the databases of one system → Create. That's your `main` baseline.
+4. Branch from the status bar, edit, commit, **Deploy…** to any server. **⇩ Export to Code…** drops `sql/` files into your app project.
 
 ## Development
 
-Prereqs: Node 20+ (LTS recommended), Go 1.22+, a SQL Server to talk to.
+Prereqs: Node 20+, Go 1.22+, a SQL Server.
 
 ```powershell
 npm install
-npm run dev          # builds the Go backend, starts Electron with hot reload
+npm run dev        # builds the Go backend + launches Electron with HMR
+npm run typecheck  # renderer + main TS
+npm run test:backend
+npm run dist       # NSIS installer → release/
 ```
-
-Backend tests:
-
-```powershell
-npm run test:backend # go test ./...
-```
-
-## Packaging
-
-```powershell
-npm run dist         # go build → electron-builder → release/*.exe (NSIS installer)
-```
-
-The Go backend compiles to a single `svcide-backend.exe` bundled under `resources/backend/`.
 
 ## Architecture
 
 ```
-┌────────────────────── Electron ──────────────────────┐
-│  renderer (React + Monaco)                           │
-│      │  fetch + bearer token                         │
-│  main (spawns backend, handshake on stdout)          │
-└──────┼───────────────────────────────────────────────┘
-       ▼
-  svcide-backend.exe  (Go, 127.0.0.1:<random port>)
-   ├─ conn      profiles (%APPDATA%\SqlVcIde), keyring, pool registry
-   ├─ db        metadata, GO-split executor, DDL scripter, autocomplete
-   ├─ gitrepo   go-git: sync/commit/branch/merge/log/remotes + manifest
-   ├─ deploy    planner (order: functions→views→procs→triggers) + runner
-   └─ httpapi   REST endpoints
+Electron main ──spawns──▶ svcide-backend.exe (Go, 127.0.0.1:<random>, bearer token)
+     │                        ├─ conn/     profiles, credential manager, pool registry
+renderer (React+Monaco)       ├─ db/       metadata, executor (GO-split/cancel), scripter, search
+     │      HTTP+token        ├─ gitrepo/  go-git sync/commit/branch/merge/remotes + manifest
+     └────────────────────▶   ├─ deploy/   planner + transactional runner
+                              └─ httpapi/  REST
 ```
 
-Notes:
-- Connection protocols: TCP (default), Named Pipes, or Shared Memory (`lpc` — pick this for a local server without TCP enabled).
-- Scripted files are normalized (LF, single trailing newline, `CREATE OR ALTER` header) so re-syncs never produce phantom diffs.
-- Encrypted modules (`WITH ENCRYPTION`) cannot be scripted and are skipped with a warning.
+Design decisions worth knowing: object scripts are normalized (LF, single trailing newline, `CREATE OR ALTER` headers) so re-syncs never produce phantom diffs; merges are file-level with explicit conflict resolution; tables are versioned for history but never auto-deployed.
+
+## Roadmap
+
+- Editable table designer (ALTER TABLE generation)
+- Built-in AI assistant (bring-your-own Claude API key)
+- Execution plans, grid export (CSV/Excel), result editing
+- PostgreSQL / MySQL drivers
+- Extension API
+
+## License
+
+[MIT](LICENSE) © 2026 21c Care
