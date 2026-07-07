@@ -8,6 +8,8 @@ export interface BackendInfo {
 
 const api = {
   getBackendInfo: (): Promise<BackendInfo> => ipcRenderer.invoke('backend:info'),
+  getAppInfo: (): Promise<{ version: string; updateRepo: string }> =>
+    ipcRenderer.invoke('app:info'),
   pickFolder: (title: string): Promise<string | null> =>
     ipcRenderer.invoke('dialog:pickFolder', title),
   onBackendReady: (cb: (info: BackendInfo) => void): void => {

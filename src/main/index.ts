@@ -40,6 +40,17 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   ipcMain.handle('backend:info', () => getBackendInfo())
 
+  ipcMain.handle('app:info', () => {
+    try {
+      // updateRepo lives in package.json next to the app entry
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const pkg = require(join(app.getAppPath(), 'package.json'))
+      return { version: app.getVersion(), updateRepo: pkg.updateRepo ?? '' }
+    } catch {
+      return { version: app.getVersion(), updateRepo: '' }
+    }
+  })
+
   ipcMain.handle('dialog:pickFolder', async (_e, title: string) => {
     const res = await dialog.showOpenDialog({
       title,
