@@ -2,12 +2,14 @@ import { get, post, put, del } from './client'
 import type {
   ColumnInfo,
   DatabaseInfo,
+  DbExtras,
   Definition,
   IndexInfo,
   ObjectInfo,
   Profile,
   ProfileDraft,
   QuerySnapshot,
+  TableDetail,
   TestResult
 } from './types'
 
@@ -36,6 +38,11 @@ export const explorerApi = {
   definition: (connId: string, db: string, schema: string, name: string) =>
     get<Definition>(
       `/explorer/${enc(connId)}/${enc(db)}/objects/${enc(schema)}/${enc(name)}/definition`
+    ),
+  extras: (connId: string, db: string) => get<DbExtras>(`/explorer/${enc(connId)}/${enc(db)}/extras`),
+  tableDetail: (connId: string, db: string, schema: string, name: string) =>
+    get<TableDetail>(
+      `/explorer/${enc(connId)}/${enc(db)}/tables/${enc(schema)}/${enc(name)}/detail`
     )
 }
 

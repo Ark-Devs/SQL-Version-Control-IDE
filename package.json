@@ -1,6 +1,6 @@
 {
   "name": "sql-version-control-ide",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "SQL Server IDE with Git-based version control for database objects",
   "main": "./out/main/index.js",
   "author": "21c Care",

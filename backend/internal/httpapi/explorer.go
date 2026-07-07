@@ -74,6 +74,32 @@ func mountExplorer(r chi.Router, d *Deps) {
 				writeJSON(w, http.StatusOK, idx)
 			})
 
+			r.Get("/extras", func(w http.ResponseWriter, req *http.Request) {
+				pool, ok := d.poolFor(w, req)
+				if !ok {
+					return
+				}
+				extras, err := db.LoadExtras(req.Context(), pool)
+				if err != nil {
+					writeErr(w, http.StatusInternalServerError, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, extras)
+			})
+
+			r.Get("/tables/{schema}/{name}/detail", func(w http.ResponseWriter, req *http.Request) {
+				pool, ok := d.poolFor(w, req)
+				if !ok {
+					return
+				}
+				detail, err := db.LoadTableDetail(req.Context(), pool, chi.URLParam(req, "schema"), chi.URLParam(req, "name"))
+				if err != nil {
+					writeErr(w, http.StatusInternalServerError, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, detail)
+			})
+
 			r.Get("/objects/{schema}/{name}/definition", func(w http.ResponseWriter, req *http.Request) {
 				pool, ok := d.poolFor(w, req)
 				if !ok {

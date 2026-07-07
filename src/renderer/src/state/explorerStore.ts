@@ -1,21 +1,27 @@
 import { create } from 'zustand'
 import { explorerApi } from '../api/endpoints'
-import type { ColumnInfo, IndexInfo, ObjectInfo } from '../api/types'
+import type { ColumnInfo, DbExtras, IndexInfo, ObjectInfo, TableDetail } from '../api/types'
 
 interface ExplorerState {
   /** connId → database names (undefined = not loaded, null = loading) */
   databases: Record<string, string[] | null | undefined>
   /** "connId|db" → objects */
   objects: Record<string, ObjectInfo[] | null | undefined>
+  /** "connId|db" → deep-tree metadata (synonyms, types, users, params, …) */
+  extras: Record<string, DbExtras | null | undefined>
   /** "connId|db|schema|name" → columns */
   columns: Record<string, ColumnInfo[] | null | undefined>
   indexes: Record<string, IndexInfo[] | null | undefined>
+  /** "connId|db|schema|name" → keys/constraints/triggers */
+  details: Record<string, TableDetail | null | undefined>
   errors: Record<string, string>
 
   loadDatabases: (connId: string) => Promise<void>
   loadObjects: (connId: string, db: string) => Promise<void>
+  loadExtras: (connId: string, db: string) => Promise<void>
   loadColumns: (connId: string, db: string, schema: string, name: string) => Promise<void>
   loadIndexes: (connId: string, db: string, schema: string, name: string) => Promise<void>
+  loadDetail: (connId: string, db: string, schema: string, name: string) => Promise<void>
   refreshDatabase: (connId: string, db: string) => Promise<void>
   forgetConnection: (connId: string) => void
 }
@@ -23,8 +29,10 @@ interface ExplorerState {
 export const useExplorer = create<ExplorerState>((set, get) => ({
   databases: {},
   objects: {},
+  extras: {},
   columns: {},
   indexes: {},
+  details: {},
   errors: {},
 
   loadDatabases: async (connId) => {
@@ -60,6 +68,33 @@ export const useExplorer = create<ExplorerState>((set, get) => ({
     }
   },
 
+  loadExtras: async (connId, db) => {
+    const key = `${connId}|${db}`
+    if (get().extras[key] !== undefined) return
+    set((s) => ({ extras: { ...s.extras, [key]: null } }))
+    try {
+      const ex = await explorerApi.extras(connId, db)
+      set((s) => ({ extras: { ...s.extras, [key]: ex } }))
+    } catch (err) {
+      set((s) => ({
+        extras: { ...s.extras, [key]: undefined },
+        errors: { ...s.errors, [key]: String(err) }
+      }))
+    }
+  },
+
+  loadDetail: async (connId, db, schema, name) => {
+    const key = `${connId}|${db}|${schema}|${name}`
+    if (get().details[key] !== undefined) return
+    set((s) => ({ details: { ...s.details, [key]: null } }))
+    try {
+      const detail = await explorerApi.tableDetail(connId, db, schema, name)
+      set((s) => ({ details: { ...s.details, [key]: detail } }))
+    } catch {
+      set((s) => ({ details: { ...s.details, [key]: undefined } }))
+    }
+  },
+
   loadColumns: async (connId, db, schema, name) => {
     const key = `${connId}|${db}|${schema}|${name}`
     if (get().columns[key] !== undefined) return
@@ -81,13 +116,17 @@ export const useExplorer = create<ExplorerState>((set, get) => ({
     set((s) => {
       const objects = { ...s.objects }
       delete objects[key]
+      const extras = { ...s.extras }
+      delete extras[key]
       const columns = { ...s.columns }
       const indexes = { ...s.indexes }
+      const details = { ...s.details }
       for (const k of Object.keys(columns)) if (k.startsWith(key + '|')) delete columns[k]
       for (const k of Object.keys(indexes)) if (k.startsWith(key + '|')) delete indexes[k]
-      return { objects, columns, indexes }
+      for (const k of Object.keys(details)) if (k.startsWith(key + '|')) delete details[k]
+      return { objects, extras, columns, indexes, details }
     })
-    await get().loadObjects(connId, db)
+    await Promise.all([get().loadObjects(connId, db), get().loadExtras(connId, db)])
   },
 
   forgetConnection: (connId) => {
@@ -100,8 +139,10 @@ export const useExplorer = create<ExplorerState>((set, get) => ({
       return {
         databases: scrub(s.databases),
         objects: scrub(s.objects),
+        extras: scrub(s.extras),
         columns: scrub(s.columns),
         indexes: scrub(s.indexes),
+        details: scrub(s.details),
         errors: scrub(s.errors)
       }
     })
