@@ -6,7 +6,7 @@
   "author": "21c Care",
   "license": "MIT",
   "private": true,
-  "updateRepo": "muh4mmedh/SQL-Version-Control-IDE",
+  "updateRepo": "Ark-Devs/SQL-Version-Control-IDE",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
