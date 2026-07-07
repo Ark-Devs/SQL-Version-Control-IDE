@@ -3,6 +3,7 @@ import ObjectExplorer from '../explorer/ObjectExplorer'
 import EditorTabs from '../editor/EditorTabs'
 import SqlEditor from '../editor/SqlEditor'
 import DiffTab from '../editor/DiffTab'
+import DesignTab from '../editor/DesignTab'
 import ResultsPane from '../results/ResultsPane'
 import ConnectionDialog from '../connections/ConnectionDialog'
 import ChangelogDialog from '../editor/ChangelogDialog'
@@ -99,7 +100,9 @@ export default function Shell(): React.JSX.Element {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           <EditorTabs />
           <div style={{ flex: 1, minHeight: 0 }}>
-            {activeTab?.kind === 'diff' ? (
+            {activeTab?.kind === 'design' ? (
+              <DesignTab key={activeTab.id} tab={activeTab} />
+            ) : activeTab?.kind === 'diff' ? (
               <DiffTab key={activeTab.id} tab={activeTab} />
             ) : activeTab ? (
               <SqlEditor key={activeTab.id} tabId={activeTab.id} content={activeTab.content} />

@@ -9,6 +9,7 @@ import HistoryDialog from './HistoryDialog'
 import MergeDialog from './MergeDialog'
 import RemoteSection from './RemoteSection'
 import DeployWizard from '../deploy/DeployWizard'
+import ExportDialog from './ExportDialog'
 
 export default function GitPanel(): React.JSX.Element {
   const git = useGit()
@@ -19,6 +20,7 @@ export default function GitPanel(): React.JSX.Element {
   const [historyPath, setHistoryPath] = useState<string | null>(null)
   const [showMerge, setShowMerge] = useState(false)
   const [showDeploy, setShowDeploy] = useState(false)
+  const [showExport, setShowExport] = useState(false)
 
   useEffect(() => {
     void git.refresh()
@@ -90,7 +92,14 @@ export default function GitPanel(): React.JSX.Element {
         >
           Open Existing Repo…
         </button>
+        <button
+          onClick={() => setShowExport(true)}
+          title="Script procs/functions/views into your application project's sql/ folder"
+        >
+          ⇩ Export to Code…
+        </button>
         {git.error && <div style={{ color: 'var(--error)', fontSize: 12, userSelect: 'text' }}>{git.error}</div>}
+        {showExport && <ExportDialog onClose={() => setShowExport(false)} />}
       </div>
     )
   }
@@ -132,6 +141,13 @@ export default function GitPanel(): React.JSX.Element {
           title="Deploy a branch's objects to any server (CREATE OR ALTER in a transaction)"
         >
           🚀 Deploy…
+        </button>
+        <button
+          disabled={git.busy !== null}
+          onClick={() => setShowExport(true)}
+          title="Script procs/functions/views into your application project's sql/ folder"
+        >
+          ⇩ Export to Code…
         </button>
         {statusMsg && <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{statusMsg}</div>}
         {git.error && <div style={{ fontSize: 11, color: 'var(--error)', userSelect: 'text' }}>{git.error}</div>}
@@ -213,6 +229,7 @@ export default function GitPanel(): React.JSX.Element {
       {historyPath && <HistoryDialog path={historyPath} onClose={() => setHistoryPath(null)} />}
       {showMerge && <MergeDialog onClose={() => setShowMerge(false)} />}
       {showDeploy && <DeployWizard onClose={() => setShowDeploy(false)} />}
+      {showExport && <ExportDialog onClose={() => setShowExport(false)} />}
     </div>
   )
 }

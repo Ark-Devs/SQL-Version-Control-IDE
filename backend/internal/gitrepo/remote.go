@@ -85,6 +85,14 @@ func (m *Manager) auth(remoteName, token string) (*githttp.BasicAuth, string, er
 	if token == "" {
 		token = remoteToken(url)
 	}
+	if token == "" && strings.Contains(url, "github.com") {
+		// Fall back to the token saved by GitHub sign-in (see httpapi's
+		// /api/github/login), stored under the fixed "github.com" account
+		// rather than this specific remote URL.
+		if tok, err := keyring.Get(remoteCredService, "github.com"); err == nil {
+			token = tok
+		}
+	}
 	if token == "" {
 		return nil, url, nil // public repos work anonymously for fetch
 	}

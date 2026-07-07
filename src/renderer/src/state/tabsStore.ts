@@ -14,7 +14,7 @@ export interface ExecutionState {
 export interface Tab {
   id: string
   title: string
-  kind?: 'sql' | 'diff'
+  kind?: 'sql' | 'diff' | 'design'
   connId?: string
   database?: string
   content: string
@@ -25,6 +25,10 @@ export interface Tab {
   /** diff tabs: original (left) content; `content` is the modified (right) side */
   diffOriginal?: string
   diffLabels?: { original: string; modified: string }
+  /** where this tab's content came from, e.g. a "new object" template (colors the tab title green) */
+  origin?: 'template'
+  /** design tabs: the table being inspected (read-only SSMS-Design-like view) */
+  designTarget?: { connId: string; database: string; schema: string; name: string }
 }
 
 interface TabsState {
@@ -68,6 +72,8 @@ export const useTabs = create<TabsState>((set, get) => {
         repoPath: partial?.repoPath,
         diffOriginal: partial?.diffOriginal,
         diffLabels: partial?.diffLabels,
+        origin: partial?.origin,
+        designTarget: partial?.designTarget,
         dirty: false
       }
       set((s) => ({ tabs: [...s.tabs, tab], activeId: id, counter: n }))

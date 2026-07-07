@@ -336,6 +336,17 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
             if (obj.type === 'view') {
               items.push({ label: 'Script as CREATE OR ALTER', onClick: () => void openDefinition(connId, db, obj.schema, obj.name) })
             }
+            if (obj.type === 'table') {
+              items.push({
+                label: 'Design',
+                onClick: () =>
+                  useTabs.getState().openTab({
+                    title: `design: ${obj.schema}.${obj.name}`,
+                    kind: 'design',
+                    designTarget: { connId, database: db, schema: obj.schema, name: obj.name }
+                  })
+              })
+            }
             setMenu({ x: e.clientX, y: e.clientY, items })
           }
         })}

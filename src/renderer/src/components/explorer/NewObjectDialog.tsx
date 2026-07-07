@@ -46,7 +46,8 @@ export default function NewObjectDialog({ target, onClose }: { target: NewObject
       title: fullName,
       connId: target.connId,
       database: target.database,
-      content
+      content,
+      origin: 'template'
     })
     onClose()
   }

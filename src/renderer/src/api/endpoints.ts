@@ -43,6 +43,10 @@ export const explorerApi = {
   tableDetail: (connId: string, db: string, schema: string, name: string) =>
     get<TableDetail>(
       `/explorer/${enc(connId)}/${enc(db)}/tables/${enc(schema)}/${enc(name)}/detail`
+    ),
+  tableScript: (connId: string, db: string, schema: string, name: string) =>
+    get<{ sql: string }>(
+      `/explorer/${enc(connId)}/${enc(db)}/tables/${enc(schema)}/${enc(name)}/script`
     )
 }
 
