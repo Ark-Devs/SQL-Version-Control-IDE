@@ -10,3 +10,4 @@ backend/bin/
 !.vscode/extensions.json
 tsconfig.*.tsbuildinfo
 .electron-cache/
+release-v*/
