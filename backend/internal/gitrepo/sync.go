@@ -88,11 +88,85 @@ func sanitizeName(name string) string {
 	return b.String()
 }
 
+// layoutRoot is the top-level folder objects are scripted under.
+// legacyRoot is the pre-migration name; repos created before the SQL/ layout
+// stored objects under DB/ and are migrated on open (see MigrateLayout).
+const (
+	layoutRoot = "SQL"
+	legacyRoot = "DB"
+)
+
 // ObjectPath returns the repo-relative path for an object:
-// DB/<database>/<schema>/<TypeFolder>/<name>.sql
+// SQL/<database>/<schema>/<TypeFolder>/<name>.sql
 func ObjectPath(database, schema, name, objType string) string {
 	return filepath.ToSlash(filepath.Join(
-		"DB", sanitizeName(database), sanitizeName(schema), typeFolder(objType), sanitizeName(name)+".sql"))
+		layoutRoot, sanitizeName(database), sanitizeName(schema), typeFolder(objType), sanitizeName(name)+".sql"))
+}
+
+// SQLFolderExists reports whether <repo>/SQL/ exists on disk. Combined with a
+// manifest that lists databases, its absence means the repo has never been
+// synced — the deterministic first-sync signal.
+func (m *Manager) SQLFolderExists() bool {
+	_, root, err := m.current()
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(root, layoutRoot))
+	return err == nil && info.IsDir()
+}
+
+// MigrateLayout upgrades a legacy DB/ worktree to the SQL/ layout when a repo
+// has a DB/ directory but no SQL/ directory. It renames DB/ → SQL/ on disk and
+// rewrites every manifest object key from "DB/..." to "SQL/...". The change is
+// left uncommitted so the user reviews and commits it via the Git panel.
+// Returns true when a migration was performed.
+func (m *Manager) MigrateLayout() (bool, error) {
+	_, root, err := m.current()
+	if err != nil {
+		return false, err
+	}
+	legacyDir := filepath.Join(root, legacyRoot)
+	newDir := filepath.Join(root, layoutRoot)
+
+	info, statErr := os.Stat(legacyDir)
+	if statErr != nil || !info.IsDir() {
+		return false, nil // no legacy tree to migrate
+	}
+	if _, err := os.Stat(newDir); err == nil {
+		return false, nil // SQL/ already present — leave both as-is
+	}
+
+	if err := os.Rename(legacyDir, newDir); err != nil {
+		return false, err
+	}
+
+	// rewrite manifest object keys DB/... → SQL/...
+	man, err := m.ReadManifest()
+	if err != nil {
+		return true, err
+	}
+	if len(man.Objects) > 0 {
+		rekeyed := make(map[string]ManifestObject, len(man.Objects))
+		for key, obj := range man.Objects {
+			rekeyed[migrateKey(key)] = obj
+		}
+		man.Objects = rekeyed
+		if err := m.WriteManifest(man); err != nil {
+			return true, err
+		}
+	}
+	return true, nil
+}
+
+// migrateKey rewrites a single legacy DB/ manifest key to its SQL/ equivalent.
+func migrateKey(key string) string {
+	if key == legacyRoot {
+		return layoutRoot
+	}
+	if strings.HasPrefix(key, legacyRoot+"/") {
+		return layoutRoot + "/" + strings.TrimPrefix(key, legacyRoot+"/")
+	}
+	return key
 }
 
 func (m *Manager) ReadManifest() (*Manifest, error) {
@@ -206,6 +280,187 @@ func (m *Manager) Sync(ctx context.Context, poolFor PoolFunc, man *Manifest) (*S
 		return nil, err
 	}
 	return res, nil
+}
+
+// SyncObjectResult summarizes a single-object mirror into the worktree.
+type SyncObjectResult struct {
+	Skipped   bool   `json:"skipped"`
+	Reason    string `json:"reason,omitempty"`
+	Written   bool   `json:"written"`
+	Deleted   bool   `json:"deleted"`
+	Encrypted bool   `json:"encrypted"`
+	Path      string `json:"path,omitempty"`
+}
+
+// candidateTypes lists every object type slug an object could be scripted as.
+// Used to clean up stale files/manifest entries when an object is dropped or
+// changes type (e.g. a proc replaced by a view of the same name).
+var candidateTypes = []string{"table", "view", "proc", "tvf", "scalar", "trigger"}
+
+// SyncObject mirrors one database object into the worktree and updates the
+// manifest, then persists the manifest. obj is the freshly-scripted object (as
+// returned by db.ScriptModule/db.ScriptTable) or nil when the object no longer
+// exists in the database (a drop). schema/name identify the object for the drop
+// path and for pruning stale entries; when obj is non-nil its canonical
+// Schema/Name/Type from the database win.
+//
+// Encrypted objects are skipped (flagged, not written). Callers are responsible
+// for the repo-open / database-tracked checks before calling.
+func (m *Manager) SyncObject(database, schema, name string, obj *db.ScriptedObject, man *Manifest) (*SyncObjectResult, error) {
+	_, root, err := m.current()
+	if err != nil {
+		return nil, err
+	}
+	if man.Objects == nil {
+		man.Objects = map[string]ManifestObject{}
+	}
+	res := &SyncObjectResult{}
+
+	if obj != nil && obj.Encrypted {
+		res.Skipped = true
+		res.Encrypted = true
+		res.Reason = "object is encrypted"
+		return res, nil
+	}
+
+	if obj != nil {
+		// canonical identity as the database reports it
+		schema, name = obj.Schema, obj.Name
+		rel := ObjectPath(database, schema, name, obj.Type)
+
+		// clear any stale files/manifest entries under other type folders
+		removeObjectFiles(root, man, database, schema, name, rel)
+
+		abs := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			return nil, err
+		}
+		existing, readErr := os.ReadFile(abs)
+		if readErr != nil || string(existing) != obj.SQL {
+			if err := os.WriteFile(abs, []byte(obj.SQL), 0o644); err != nil {
+				return nil, err
+			}
+		}
+		man.Objects[rel] = ManifestObject{Database: database, Schema: schema, Name: name, Type: obj.Type}
+		res.Written = true
+		res.Path = rel
+		if err := m.WriteManifest(man); err != nil {
+			return nil, err
+		}
+		return res, nil
+	}
+
+	// object no longer exists — remove it from every candidate type folder
+	res.Deleted = removeObjectFiles(root, man, database, schema, name, "")
+	if err := m.WriteManifest(man); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// removeObjectFiles deletes the object's .sql file in every candidate type
+// folder (except keepRel) and prunes matching manifest entries. Returns true
+// if any file was removed from disk. Comparison of manifest identity is
+// case-insensitive to tolerate casing differences between the request and the
+// stored canonical identity.
+func removeObjectFiles(root string, man *Manifest, database, schema, name, keepRel string) bool {
+	removedFile := false
+	for _, t := range candidateTypes {
+		rel := ObjectPath(database, schema, name, t)
+		if rel == keepRel {
+			continue
+		}
+		abs := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.Remove(abs); err == nil {
+			removedFile = true
+		}
+	}
+	for key, o := range man.Objects {
+		if key == keepRel {
+			continue
+		}
+		if strings.EqualFold(o.Database, database) && strings.EqualFold(o.Schema, schema) && strings.EqualFold(o.Name, name) {
+			delete(man.Objects, key)
+		}
+	}
+	return removedFile
+}
+
+// ObjectStatusEntry describes a single object's version-control state,
+// derived from the git worktree status rather than a live DB comparison.
+// Powers the M/A/D badges (and deleted-object ghost rows) in the explorer.
+type ObjectStatusEntry struct {
+	State string `json:"state"` // added | modified | deleted
+	Type  string `json:"type"`
+	Path  string `json:"path"`
+}
+
+// ObjectStatus maps every changed SQL/ file in the worktree back to the
+// database object it represents, keyed "<database>|<schema>|<name>".
+//
+// Added/modified paths are resolved via the current worktree manifest.
+// Deleted paths are resolved via the manifest at HEAD instead, since Sync
+// rewrites the worktree manifest and drops entries for objects that no
+// longer exist — HEAD still has the last-known mapping for the removed file.
+// Non-SQL/ paths (the manifest itself, docs, etc.) are ignored. Returns an
+// empty map (not an error) when no repository is open.
+func (m *Manager) ObjectStatus() (map[string]ObjectStatusEntry, error) {
+	result := map[string]ObjectStatusEntry{}
+	if !m.IsOpen() {
+		return result, nil
+	}
+
+	statuses, err := m.Status()
+	if err != nil {
+		return nil, err
+	}
+	if len(statuses) == 0 {
+		return result, nil
+	}
+
+	man, err := m.ReadManifest()
+	if err != nil {
+		return nil, err
+	}
+
+	var headMan *Manifest
+	headLoaded := false
+
+	for _, fs := range statuses {
+		if !strings.HasPrefix(fs.Path, layoutRoot+"/") {
+			continue
+		}
+		obj, ok := man.Objects[fs.Path]
+		if !ok && fs.State == "deleted" {
+			if !headLoaded {
+				headMan = m.manifestAtHEAD()
+				headLoaded = true
+			}
+			if headMan != nil {
+				obj, ok = headMan.Objects[fs.Path]
+			}
+		}
+		if !ok {
+			continue
+		}
+		key := obj.Database + "|" + obj.Schema + "|" + obj.Name
+		result[key] = ObjectStatusEntry{State: fs.State, Type: obj.Type, Path: fs.Path}
+	}
+	return result, nil
+}
+
+// manifestAtHEAD reads and parses .svcide/manifest.json as committed at HEAD,
+// returning nil if it can't be read (e.g. no commits yet).
+func (m *Manager) manifestAtHEAD() *Manifest {
+	data, err := m.FileAtRef(manifestPath, "HEAD")
+	if err != nil {
+		return nil
+	}
+	man, err := ParseManifest([]byte(data))
+	if err != nil {
+		return nil
+	}
+	return man
 }
 
 // DriftStatus classifies a database object against the repo worktree.

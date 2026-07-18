@@ -4,6 +4,12 @@ export interface RepoInfo {
   open: boolean
   path?: string
   branch?: string
+  /** whether <repo>/SQL/ exists on disk — absent + manifest databases = first sync */
+  sqlFolderExists?: boolean
+  /** databases tracked by the manifest (mirror of manifest.databases) */
+  databases?: string[]
+  /** true when opening the repo migrated a legacy DB/ layout to SQL/ */
+  migratedLayout?: boolean
   manifest?: {
     sourceServer: string
     sourceConnId: string
@@ -14,6 +20,20 @@ export interface RepoInfo {
 
 /** "schema.name" → drift status vs the repo */
 export type DriftReport = Record<string, 'new' | 'modified'>
+
+/** Per-object VC state derived from the git worktree status + manifest. */
+export interface ObjectStatusEntry {
+  state: 'added' | 'modified' | 'deleted'
+  type: string
+  path: string
+}
+
+/** "database|schema|name" → VC state, across every database in the repo. */
+export type ObjectStatusMap = Record<string, ObjectStatusEntry>
+
+export interface ObjectStatusResponse {
+  objects: ObjectStatusMap
+}
 
 export interface FileChange {
   path: string
@@ -63,6 +83,7 @@ export const gitApi = {
   drift: (connId: string, db: string) =>
     get<DriftReport>(`/repo/drift/${enc(connId)}/${enc(db)}`),
   changes: () => get<FileChange[] | null>('/repo/changes'),
+  objectStatus: () => get<ObjectStatusResponse>('/repo/object-status'),
   commit: (message: string, paths: string[]) =>
     post<{ hash: string }>('/repo/commit', { message, paths }),
   discard: (paths: string[]) => post<{ discarded: boolean }>('/repo/discard', { paths }),

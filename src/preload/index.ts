@@ -6,6 +6,14 @@ export interface BackendInfo {
   ready: boolean
 }
 
+/** Contextual flags the renderer reports so the app menu can grey out items correctly. */
+export interface MenuState {
+  hasTab: boolean
+  running: boolean
+  repoOpen: boolean
+  connected: boolean
+}
+
 const api = {
   getBackendInfo: (): Promise<BackendInfo> => ipcRenderer.invoke('backend:info'),
   getAppInfo: (): Promise<{ version: string; updateRepo: string }> =>
@@ -20,6 +28,14 @@ const api = {
   },
   onUpdateAvailable: (cb: (info: { version: string; url: string }) => void): void => {
     ipcRenderer.on('update:available', (_e, info: { version: string; url: string }) => cb(info))
+  },
+  /** Subscribe to commands sent by the native application menu. */
+  onMenuCommand: (cb: (command: string) => void): void => {
+    ipcRenderer.on('menu:command', (_e, command: string) => cb(command))
+  },
+  /** Push current app state to main so it can enable/disable menu items. */
+  setMenuState: (state: MenuState): void => {
+    ipcRenderer.send('menu:state', state)
   }
 }
 

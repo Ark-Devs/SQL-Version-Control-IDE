@@ -14,7 +14,8 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     backgroundColor: '#1e1e1e',
-    title: 'SQL Version Control IDE',
+    title: 'ArkSQL',
+    icon: join(__dirname, '../../build/icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,

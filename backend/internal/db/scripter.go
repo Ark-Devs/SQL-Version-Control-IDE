@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -52,6 +53,38 @@ ORDER BY s.name, o.name`)
 		out = append(out, so)
 	}
 	return out, rows.Err()
+}
+
+// ScriptModule scripts a single programmable module (proc/view/function/
+// trigger) by schema+name, reusing the same source query as ScriptModules.
+// Returns (nil, nil) when no such module exists — the caller treats that as a
+// drop. Encrypted modules come back with Encrypted=true and empty SQL.
+func ScriptModule(ctx context.Context, pool *sql.DB, schema, name string) (*ScriptedObject, error) {
+	row := pool.QueryRowContext(ctx, `
+SELECT s.name, o.name, RTRIM(o.type), m.definition,
+       CONVERT(varchar(23), o.create_date, 121), CONVERT(varchar(23), o.modify_date, 121)
+FROM sys.objects o
+JOIN sys.schemas s ON o.schema_id = s.schema_id
+JOIN sys.sql_modules m ON m.object_id = o.object_id
+WHERE o.type IN ('P','V','FN','IF','TF','TR') AND o.is_ms_shipped = 0
+  AND s.name = @p1 AND o.name = @p2`, schema, name)
+
+	var so ScriptedObject
+	var typeCode string
+	var def sql.NullString
+	if err := row.Scan(&so.Schema, &so.Name, &typeCode, &def, &so.CreateDate, &so.ModifyDate); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	so.Type = objectTypeName(typeCode)
+	if !def.Valid {
+		so.Encrypted = true
+	} else {
+		so.SQL = NormalizeModule(def.String)
+	}
+	return &so, nil
 }
 
 // headerRe matches the CREATE [OR ALTER] <kind> header of a module. It is
@@ -167,6 +200,37 @@ type tableIndex struct {
 // tables (bulk queries — no per-table round trips). Tables are tracked for
 // history/diffing only; they are excluded from deploys.
 func ScriptTables(ctx context.Context, pool *sql.DB) ([]ScriptedObject, error) {
+	return scriptTables(ctx, pool, "", "")
+}
+
+// ScriptTable scripts a single table by schema+name, reusing the same queries
+// as ScriptTables (filtered to that one table). Returns (nil, nil) when the
+// table does not exist — the caller treats that as a drop.
+func ScriptTable(ctx context.Context, pool *sql.DB, schema, name string) (*ScriptedObject, error) {
+	objs, err := scriptTables(ctx, pool, schema, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(objs) == 0 {
+		return nil, nil
+	}
+	return &objs[0], nil
+}
+
+// scriptTables is the shared implementation. With empty schema/name it scripts
+// every user table; otherwise it filters every query to that one table via
+// @p1/@p2. The filter fragments are spliced into each query at a %s marker.
+func scriptTables(ctx context.Context, pool *sql.DB, schemaFilter, nameFilter string) ([]ScriptedObject, error) {
+	// whereAnd augments queries that already have a WHERE clause; whereNew adds
+	// one to queries whose table filtering lives in a JOIN condition.
+	whereAnd, whereNew := "", ""
+	var args []any
+	if nameFilter != "" {
+		whereAnd = " AND s.name = @p1 AND tb.name = @p2"
+		whereNew = " WHERE s.name = @p1 AND tb.name = @p2"
+		args = []any{schemaFilter, nameFilter}
+	}
+
 	type key struct{ schema, table string }
 
 	cols := map[key][]tableColumn{}
@@ -178,7 +242,7 @@ func ScriptTables(ctx context.Context, pool *sql.DB) ([]ScriptedObject, error) {
 	var order []key
 
 	// columns (+identity, computed, defaults)
-	rows, err := pool.QueryContext(ctx, `
+	rows, err := pool.QueryContext(ctx, fmt.Sprintf(`
 SELECT s.name, tb.name, c.name, ty.name, c.max_length, c.precision, c.scale, c.is_nullable,
        c.is_identity, ISNULL(ic.seed_value, 0), ISNULL(ic.increment_value, 0),
        c.is_computed, ISNULL(cc.definition, ''), ISNULL(cc.is_persisted, 0), ISNULL(dc.definition, ''),
@@ -190,8 +254,8 @@ JOIN sys.types ty ON c.user_type_id = ty.user_type_id
 LEFT JOIN sys.identity_columns ic ON ic.object_id = c.object_id AND ic.column_id = c.column_id
 LEFT JOIN sys.computed_columns cc ON cc.object_id = c.object_id AND cc.column_id = c.column_id
 LEFT JOIN sys.default_constraints dc ON dc.parent_object_id = c.object_id AND dc.parent_column_id = c.column_id
-WHERE tb.is_ms_shipped = 0
-ORDER BY s.name, tb.name, c.column_id`)
+WHERE tb.is_ms_shipped = 0%s
+ORDER BY s.name, tb.name, c.column_id`, whereAnd), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -219,15 +283,15 @@ ORDER BY s.name, tb.name, c.column_id`)
 	}
 
 	// PK / unique constraints
-	rows, err = pool.QueryContext(ctx, `
+	rows, err = pool.QueryContext(ctx, fmt.Sprintf(`
 SELECT s.name, tb.name, kc.name, kc.type, ISNULL(i.type, 0), c.name
 FROM sys.key_constraints kc
 JOIN sys.tables tb ON kc.parent_object_id = tb.object_id AND tb.is_ms_shipped = 0
 JOIN sys.schemas s ON tb.schema_id = s.schema_id
 JOIN sys.indexes i ON i.object_id = tb.object_id AND i.index_id = kc.unique_index_id
 JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 0
-JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-ORDER BY s.name, tb.name, kc.name, ic.key_ordinal`)
+JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id%s
+ORDER BY s.name, tb.name, kc.name, ic.key_ordinal`, whereNew), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +317,7 @@ ORDER BY s.name, tb.name, kc.name, ic.key_ordinal`)
 	}
 
 	// foreign keys
-	rows, err = pool.QueryContext(ctx, `
+	rows, err = pool.QueryContext(ctx, fmt.Sprintf(`
 SELECT s.name, tb.name, fk.name, pc.name, rs.name, rt.name, rc.name,
        fk.delete_referential_action_desc, fk.update_referential_action_desc
 FROM sys.foreign_keys fk
@@ -263,8 +327,8 @@ JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
 JOIN sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
 JOIN sys.tables rt ON rt.object_id = fk.referenced_object_id
 JOIN sys.schemas rs ON rt.schema_id = rs.schema_id
-JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
-ORDER BY s.name, tb.name, fk.name, fkc.constraint_column_id`)
+JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id%s
+ORDER BY s.name, tb.name, fk.name, fkc.constraint_column_id`, whereNew), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -290,12 +354,12 @@ ORDER BY s.name, tb.name, fk.name, fkc.constraint_column_id`)
 	}
 
 	// check constraints
-	rows, err = pool.QueryContext(ctx, `
+	rows, err = pool.QueryContext(ctx, fmt.Sprintf(`
 SELECT s.name, tb.name, ck.name, ck.definition
 FROM sys.check_constraints ck
 JOIN sys.tables tb ON ck.parent_object_id = tb.object_id AND tb.is_ms_shipped = 0
-JOIN sys.schemas s ON tb.schema_id = s.schema_id
-ORDER BY s.name, tb.name, ck.name`)
+JOIN sys.schemas s ON tb.schema_id = s.schema_id%s
+ORDER BY s.name, tb.name, ck.name`, whereNew), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -314,15 +378,15 @@ ORDER BY s.name, tb.name, ck.name`)
 	}
 
 	// plain nonclustered indexes (not backing constraints)
-	rows, err = pool.QueryContext(ctx, `
+	rows, err = pool.QueryContext(ctx, fmt.Sprintf(`
 SELECT s.name, tb.name, i.name, i.is_unique, c.name, ic.is_descending_key, ic.is_included_column
 FROM sys.indexes i
 JOIN sys.tables tb ON i.object_id = tb.object_id AND tb.is_ms_shipped = 0
 JOIN sys.schemas s ON tb.schema_id = s.schema_id
 JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
 JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-WHERE i.is_primary_key = 0 AND i.is_unique_constraint = 0 AND i.type > 0 AND i.name IS NOT NULL
-ORDER BY s.name, tb.name, i.name, ic.is_included_column, ic.key_ordinal`)
+WHERE i.is_primary_key = 0 AND i.is_unique_constraint = 0 AND i.type > 0 AND i.name IS NOT NULL%s
+ORDER BY s.name, tb.name, i.name, ic.is_included_column, ic.key_ordinal`, whereAnd), args...)
 	if err != nil {
 		return nil, err
 	}

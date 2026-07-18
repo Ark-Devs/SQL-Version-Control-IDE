@@ -36,7 +36,8 @@ export default function SqlEditor({ tabId, content }: Props): React.JSX.Element 
 
   const onMount: OnMount = (ed) => {
     editorRef.current = ed
-    ed.addCommand(monaco.KeyCode.F5, runSelectionOrAll)
+    // F5 is now owned by the app menu (src/main/menu.ts) so it isn't double-bound
+    // here; Ctrl+E remains as an editor-local shortcut for the same action.
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyE, runSelectionOrAll)
   }
 

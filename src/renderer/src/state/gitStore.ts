@@ -5,6 +5,7 @@ import {
   type DriftReport,
   type FileChange,
   type MergeConflict,
+  type ObjectStatusMap,
   type RepoInfo
 } from '../api/git'
 
@@ -15,11 +16,14 @@ interface GitState {
   conflicts: MergeConflict[] | null
   /** "connId|db" → drift report powering explorer badges */
   drift: Record<string, DriftReport>
+  /** "database|schema|name" → git worktree VC state, across the whole repo */
+  objectStatus: ObjectStatusMap
   busy: string | null
   error: string
 
   refresh: () => Promise<void>
   loadDrift: (connId: string, db: string) => Promise<void>
+  loadObjectStatus: () => Promise<void>
   openRepo: (path: string) => Promise<void>
   initRepo: (path: string, connId: string, databases: string[]) => Promise<void>
   sync: () => Promise<string>
@@ -45,14 +49,32 @@ export const useGit = create<GitState>((set, get) => {
     }
   }
 
+  // Refetches object-status (git-derived M/A/D state). Called from reload()
+  // — which already runs after sync/commit/discard/checkout/open/init — and
+  // exposed standalone so the explorer can also refresh it when a database
+  // node is manually refreshed.
+  const reloadObjectStatus = async (): Promise<void> => {
+    if (!get().info.open) {
+      set({ objectStatus: {} })
+      return
+    }
+    try {
+      const res = await gitApi.objectStatus()
+      set({ objectStatus: res.objects ?? {} })
+    } catch {
+      set({ objectStatus: {} })
+    }
+  }
+
   const reload = async (): Promise<void> => {
     const info = await gitApi.info()
     if (!info.open) {
-      set({ info, changes: [], branches: [] })
+      set({ info, changes: [], branches: [], objectStatus: {} })
       return
     }
     const [changes, branches] = await Promise.all([gitApi.changes(), gitApi.branches()])
     set({ info, changes: changes ?? [], branches: branches ?? [] })
+    await reloadObjectStatus()
   }
 
   return {
@@ -61,6 +83,7 @@ export const useGit = create<GitState>((set, get) => {
     branches: [],
     conflicts: null,
     drift: {},
+    objectStatus: {},
     busy: null,
     error: '',
 
@@ -76,10 +99,17 @@ export const useGit = create<GitState>((set, get) => {
       }
     },
 
+    loadObjectStatus: () => reloadObjectStatus(),
+
     openRepo: (path) =>
       wrap('open', async () => {
-        await gitApi.open(path)
+        // the migration flag only comes back on /open; reload() (GET /info)
+        // drops it, so carry it onto info after reloading.
+        const opened = await gitApi.open(path)
         await reload()
+        if (opened.migratedLayout) {
+          set((s) => ({ info: { ...s.info, migratedLayout: true } }))
+        }
       }),
 
     initRepo: (path, connId, databases) =>

@@ -9,12 +9,12 @@ import { useTabs } from '../../state/tabsStore'
 import { useUi } from '../../state/uiStore'
 
 const typeColor: Record<SearchHit['type'], string> = {
-  table: '#6ea1d8',
-  view: '#8ec7eb',
-  proc: '#d8a45c',
-  tvf: '#b18ce0',
-  scalar: '#b18ce0',
-  trigger: '#e07f7f'
+  table: '#22d3ee',
+  view: '#67e8f9',
+  proc: '#c4b5fd',
+  tvf: '#a78bfa',
+  scalar: '#a78bfa',
+  trigger: '#fb7185'
 }
 
 /**

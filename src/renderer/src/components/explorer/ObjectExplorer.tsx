@@ -6,6 +6,7 @@ import { useGit } from '../../state/gitStore'
 import { useTabs } from '../../state/tabsStore'
 import { useUi } from '../../state/uiStore'
 import { explorerApi } from '../../api/endpoints'
+import type { ObjectStatusEntry } from '../../api/git'
 import type { ObjectInfo, ObjectType, Profile } from '../../api/types'
 import ContextMenu, { MenuItem } from '../common/ContextMenu'
 import NewObjectDialog, { NewObjectTarget } from './NewObjectDialog'
@@ -33,6 +34,9 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
   const explorer = useExplorer()
   const drift = useGit((s) => s.drift)
   const repoOpen = useGit((s) => s.info.open)
+  const objectStatus = useGit((s) => s.objectStatus)
+  const repoConnId = useGit((s) => s.info.manifest?.sourceConnId)
+  const repoDatabases = useGit((s) => s.info.databases)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [loadErr, setLoadErr] = useState<Record<string, string>>({})
@@ -40,6 +44,62 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
   const [newObject, setNewObject] = useState<NewObjectTarget | null>(null)
 
   const f = filter.trim().toLowerCase()
+
+  // ---------- git-status coloring (VS Code style M/A/D) ----------
+  // Only applies to databases the open repo actually tracks; every other
+  // connection/database renders exactly as before.
+  const isTracked = (connId: string, db: string): boolean =>
+    !!repoOpen && repoConnId === connId && !!repoDatabases?.includes(db)
+
+  const vcColor = (state: ObjectStatusEntry['state']): string =>
+    state === 'added' ? 'var(--success)' : state === 'modified' ? 'var(--warning)' : 'var(--error)'
+
+  const vcLetter = (state: ObjectStatusEntry['state']): string =>
+    state === 'added' ? 'A' : state === 'modified' ? 'M' : 'D'
+
+  const vcBadge = (state: ObjectStatusEntry['state']): React.JSX.Element => (
+    <span
+      style={{
+        fontFamily: 'var(--font-mono)',
+        fontSize: 10,
+        fontWeight: 600,
+        color: vcColor(state),
+        marginLeft: 6,
+        flexShrink: 0
+      }}
+    >
+      {vcLetter(state)}
+    </span>
+  )
+
+  const countBadge = (n: number): React.JSX.Element | null =>
+    n > 0 ? (
+      <span className="badge" style={{ marginLeft: 6 }}>
+        {n}
+      </span>
+    ) : null
+
+  /** Objects git reports as deleted for one database + object type — rendered
+   *  as ghost rows in their proper folder even though the live DB no longer
+   *  has them. */
+  const ghostsFor = (db: string, type: ObjectType): { schema: string; name: string; path: string }[] => {
+    const out: { schema: string; name: string; path: string }[] = []
+    for (const [key, entry] of Object.entries(objectStatus)) {
+      if (entry.state !== 'deleted' || entry.type !== type) continue
+      const [database, schema, name] = key.split('|')
+      if (database !== db) continue
+      out.push({ schema, name, path: entry.path })
+    }
+    return out
+  }
+
+  /** Count of added/modified/deleted objects of one type in a tracked database. */
+  const changedCountFor = (connId: string, db: string, type: ObjectType): number => {
+    if (!isTracked(connId, db)) return 0
+    const objs = explorer.objects[`${connId}|${db}`] ?? []
+    const changed = objs.filter((o) => o.type === type && objectStatus[`${db}|${o.schema}|${o.name}`]).length
+    return changed + ghostsFor(db, type).length
+  }
 
   const toggle = (key: string): void => {
     setExpanded((prev) => {
@@ -115,6 +175,31 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
     )
   }
 
+  // ---------- ghost row for an object git says was deleted from the DB ----------
+  const renderGhost = (
+    type: ObjectType,
+    ghost: { schema: string; name: string; path: string },
+    depth: number
+  ): React.JSX.Element => {
+    const key = `ghost|${ghost.path}`
+    const label = (
+      <span
+        style={{
+          color: 'var(--error)',
+          textDecoration: 'line-through',
+          display: 'inline-flex',
+          alignItems: 'center'
+        }}
+      >
+        {ghost.schema}.{ghost.name}
+        {vcBadge('deleted')}
+      </span>
+    )
+    return row(key, depth, Icons[type as keyof typeof Icons] ?? Icons.table, label, {
+      title: 'Deleted in database — file still in repo'
+    })
+  }
+
   // ---------- actions ----------
   const openDefinition = async (connId: string, db: string, schema: string, name: string): Promise<void> => {
     const tabs = useTabs.getState()
@@ -153,7 +238,17 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
     const isTable = obj.type === 'table'
     const status = (drift[`${connId}|${db}`] ?? {})[`${obj.schema}.${obj.name}`]
 
-    const label = status ? (
+    const vc = isTracked(connId, db) ? objectStatus[`${db}|${obj.schema}|${obj.name}`] : undefined
+
+    const label = vc ? (
+      <span
+        style={{ color: vcColor(vc.state), display: 'inline-flex', alignItems: 'center' }}
+        title={vc.state === 'added' ? 'Added — new file not yet committed' : 'Modified — uncommitted change to this file'}
+      >
+        {obj.schema}.{obj.name}
+        {vcBadge(vc.state)}
+      </span>
+    ) : status ? (
       <span
         style={{ color: status === 'new' ? 'var(--success)' : 'var(--warning)', display: 'inline-flex', alignItems: 'center' }}
         title={status === 'new' ? 'New — not in the repo baseline' : 'Modified since the repo baseline'}
@@ -368,7 +463,17 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
     const extras = explorer.extras[`${connId}|${db}`]
     const params = extras?.params?.[`${obj.schema}.${obj.name}`] ?? []
 
-    const label = status ? (
+    const vc = isTracked(connId, db) ? objectStatus[`${db}|${obj.schema}|${obj.name}`] : undefined
+
+    const label = vc ? (
+      <span
+        style={{ color: vcColor(vc.state), display: 'inline-flex', alignItems: 'center' }}
+        title={vc.state === 'added' ? 'Added — new file not yet committed' : 'Modified — uncommitted change to this file'}
+      >
+        {obj.schema}.{obj.name}
+        {vcBadge(vc.state)}
+      </span>
+    ) : status ? (
       <span
         style={{ color: status === 'new' ? 'var(--success)' : 'var(--warning)', display: 'inline-flex', alignItems: 'center' }}
         title={status === 'new' ? 'New — not in the repo baseline' : 'Modified since the repo baseline'}
@@ -446,19 +551,40 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
     const folderKey = `${connId}|${db}|folder|${type}`
     let items = objs.filter((o) => o.type === type)
     if (f) items = items.filter((o) => `${o.schema}.${o.name}`.toLowerCase().includes(f))
-    if (f && items.length === 0) return null
+
+    const tracked = isTracked(connId, db)
+    let ghosts = tracked ? ghostsFor(db, type) : []
+    if (f) ghosts = ghosts.filter((g) => `${g.schema}.${g.name}`.toLowerCase().includes(f))
+
+    if (f && items.length === 0 && ghosts.length === 0) return null
+    const changedCount = tracked ? changedCountFor(connId, db, type) : 0
+
     const searchItem: MenuItem = { label: 'Search here…', onClick: () => useUi.getState().openSearch({ connId, database: db }) }
     const menuItems: MenuItem[] = extraMenu
       ? [...extraMenu, { separator: true, label: '', onClick: () => undefined }, searchItem]
       : [searchItem]
     return (
       <div key={folderKey}>
-        {row(folderKey, depth, Icons.folder, `${label} (${items.length})`, {
-          expandable: true,
-          onExpand: () => toggle(folderKey),
-          onContextMenu: (e) => setMenu({ x: e.clientX, y: e.clientY, items: menuItems })
-        })}
-        {(isOpen(folderKey) || f !== '') && items.map((o) => render(o, depth + 1))}
+        {row(
+          folderKey,
+          depth,
+          Icons.folder,
+          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+            {label} ({items.length})
+            {countBadge(changedCount)}
+          </span>,
+          {
+            expandable: true,
+            onExpand: () => toggle(folderKey),
+            onContextMenu: (e) => setMenu({ x: e.clientX, y: e.clientY, items: menuItems })
+          }
+        )}
+        {(isOpen(folderKey) || f !== '') && (
+          <>
+            {items.map((o) => render(o, depth + 1))}
+            {ghosts.map((g) => renderGhost(type, g, depth + 1))}
+          </>
+        )}
       </div>
     )
   }
@@ -521,9 +647,19 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
           const tvfs = objectFolder(p.id, db, depth + 3, 'Table-valued Functions', 'tvf', (o, d) => renderModule(p.id, db, o, d))
           const scalars = objectFolder(p.id, db, depth + 3, 'Scalar Functions', 'scalar', (o, d) => renderModule(p.id, db, o, d))
           if (tvfs || scalars) {
+            const fnChanged = changedCountFor(p.id, db, 'tvf') + changedCountFor(p.id, db, 'scalar')
             progChildren.push(
               <div key={fnKey}>
-                {row(fnKey, depth + 2, Icons.folder, 'Functions', { expandable: true, onExpand: () => toggle(fnKey) })}
+                {row(
+                  fnKey,
+                  depth + 2,
+                  Icons.folder,
+                  <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                    Functions
+                    {countBadge(fnChanged)}
+                  </span>,
+                  { expandable: true, onExpand: () => toggle(fnKey) }
+                )}
                 {(isOpen(fnKey) || f !== '') && (
                   <>
                     {tvfs}
@@ -638,9 +774,21 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
             )
           }
         }
+        const progChanged =
+          changedCountFor(p.id, db, 'proc') + changedCountFor(p.id, db, 'tvf') + changedCountFor(p.id, db, 'scalar')
         body.push(
           <div key={progKey}>
-            {!f && row(progKey, depth + 1, Icons.folder, 'Programmability', { expandable: true, onExpand: () => toggle(progKey) })}
+            {!f &&
+              row(
+                progKey,
+                depth + 1,
+                Icons.folder,
+                <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                  Programmability
+                  {countBadge(progChanged)}
+                </span>,
+                { expandable: true, onExpand: () => toggle(progKey) }
+              )}
             {progChildren}
           </div>
         )
@@ -699,34 +847,51 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
       }
     }
 
+    const dbChanged = isTracked(p.id, db)
+      ? (['table', 'view', 'proc', 'tvf', 'scalar'] as ObjectType[]).reduce(
+          (sum, t) => sum + changedCountFor(p.id, db, t),
+          0
+        )
+      : 0
+
     return (
       <div key={dbKey}>
-        {row(dbKey, depth, Icons.database, db, {
-          expandable: true,
-          onExpand: () =>
-            void expand(dbKey, async () => {
-              await Promise.all([explorer.loadObjects(p.id, db), explorer.loadExtras(p.id, db)])
-              if (repoOpen) void useGit.getState().loadDrift(p.id, db)
-            }),
-          onContextMenu: (e) =>
-            setMenu({
-              x: e.clientX,
-              y: e.clientY,
-              items: [
-                { label: 'New Query', onClick: () => useTabs.getState().openTab({ connId: p.id, database: db }) },
-                ...newObjectItems(p.id, db),
-                { separator: true, label: '', onClick: () => undefined },
-                { label: `Search in ${db}…`, onClick: () => useUi.getState().openSearch({ connId: p.id, database: db }) },
-                {
-                  label: 'Refresh',
-                  onClick: () => {
-                    void explorer.refreshDatabase(p.id, db)
-                    if (repoOpen) void useGit.getState().loadDrift(p.id, db)
+        {row(
+          dbKey,
+          depth,
+          Icons.database,
+          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+            {db}
+            {countBadge(dbChanged)}
+          </span>,
+          {
+            expandable: true,
+            onExpand: () =>
+              void expand(dbKey, async () => {
+                await Promise.all([explorer.loadObjects(p.id, db), explorer.loadExtras(p.id, db)])
+                if (repoOpen) void useGit.getState().loadDrift(p.id, db)
+              }),
+            onContextMenu: (e) =>
+              setMenu({
+                x: e.clientX,
+                y: e.clientY,
+                items: [
+                  { label: 'New Query', onClick: () => useTabs.getState().openTab({ connId: p.id, database: db }) },
+                  ...newObjectItems(p.id, db),
+                  { separator: true, label: '', onClick: () => undefined },
+                  { label: `Search in ${db}…`, onClick: () => useUi.getState().openSearch({ connId: p.id, database: db }) },
+                  {
+                    label: 'Refresh',
+                    onClick: () => {
+                      void explorer.refreshDatabase(p.id, db)
+                      if (repoOpen) void useGit.getState().loadDrift(p.id, db)
+                      if (repoOpen) void useGit.getState().loadObjectStatus()
+                    }
                   }
-                }
-              ]
-            })
-        })}
+                ]
+              })
+          }
+        )}
         {body}
       </div>
     )

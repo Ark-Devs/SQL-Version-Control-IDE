@@ -35,20 +35,23 @@ function EditorTab({ t, active }: { t: Tab; active: boolean }): React.JSX.Elemen
         display: 'flex',
         alignItems: 'center',
         gap: 6,
-        height: 32,
-        padding: '0 8px 0 10px',
+        height: 34,
+        padding: '0 8px 0 12px',
         cursor: 'pointer',
         borderRight: '1px solid var(--border)',
         background: active ? 'var(--bg-app)' : 'transparent',
-        boxShadow: active ? 'inset 0 1px 0 var(--accent)' : undefined,
+        boxShadow: active
+          ? 'inset 0 2px 0 var(--accent), inset 0 12px 14px -12px rgba(34, 211, 238, 0.35)'
+          : undefined,
         color,
         whiteSpace: 'nowrap',
         fontSize: 12,
-        flexShrink: 0
+        flexShrink: 0,
+        transition: 'color 0.12s var(--ease)'
       }}
       title={title}
     >
-      <span style={{ display: 'inline-flex', color: 'var(--text-dim)' }}>
+      <span style={{ display: 'inline-flex', color: active ? 'var(--accent)' : 'var(--text-dim)' }}>
         <TabIcon kind={t.kind} />
       </span>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>

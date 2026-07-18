@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import ObjectExplorer from '../explorer/ObjectExplorer'
 import EditorTabs from '../editor/EditorTabs'
 import SqlEditor from '../editor/SqlEditor'
@@ -13,6 +13,7 @@ import SettingsDialog from './SettingsDialog'
 import StatusBar from './StatusBar'
 import UpdateBanner from './UpdateBanner'
 import { useTabs } from '../../state/tabsStore'
+import { useUi } from '../../state/uiStore'
 import type { Profile } from '../../api/types'
 
 export default function Shell(): React.JSX.Element {
@@ -29,6 +30,32 @@ export default function Shell(): React.JSX.Element {
   const [showSettings, setShowSettings] = useState(false)
 
   const dragging = useRef<'explorer' | 'results' | null>(null)
+
+  // Menu commands that need a Shell-level dialog or sidebar switch (rather than
+  // a plain store action) land here; consume once, then clear.
+  const menuRequest = useUi((s) => s.menuRequest)
+  useEffect(() => {
+    if (!menuRequest) return
+    switch (menuRequest) {
+      case 'connections':
+        setDialog({ open: true, editing: null })
+        break
+      case 'settings':
+        setShowSettings(true)
+        break
+      case 'view-explorer':
+        setSidebarTab('explorer')
+        break
+      case 'view-git':
+      case 'git-commit':
+      case 'git-history':
+        setSidebarTab('git')
+        break
+      default:
+        break
+    }
+    useUi.getState().setMenuRequest(null)
+  }, [menuRequest])
 
   const onMouseMove = useCallback((e: MouseEvent) => {
     if (dragging.current === 'explorer') {
@@ -73,14 +100,20 @@ export default function Shell(): React.JSX.Element {
                 style={{
                   flex: 1,
                   textAlign: 'center',
-                  padding: '7px 0 6px',
+                  padding: '8px 0 7px',
                   cursor: 'pointer',
-                  fontSize: 11,
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 10.5,
                   fontWeight: 600,
                   textTransform: 'uppercase',
-                  letterSpacing: 0.6,
-                  color: sidebarTab === t ? 'var(--text-bright)' : 'var(--text-dim)',
-                  borderBottom: sidebarTab === t ? '2px solid var(--accent)' : '2px solid transparent',
+                  letterSpacing: 1,
+                  color: sidebarTab === t ? (t === 'git' ? 'var(--accent-2)' : 'var(--accent)') : 'var(--text-dim)',
+                  borderBottom:
+                    sidebarTab === t
+                      ? t === 'git'
+                        ? '2px solid var(--accent-2)'
+                        : '2px solid var(--accent)'
+                      : '2px solid transparent',
                   transition: 'color 0.12s var(--ease)'
                 }}
               >

@@ -31,7 +31,7 @@ function repoSlug(): string | null {
 
 async function fetchLatest(slug: string): Promise<UpdateInfo | null> {
   const res = await fetch(`https://api.github.com/repos/${slug}/releases/latest`, {
-    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'SqlVcIde' },
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ArkSQL' },
     signal: AbortSignal.timeout(10000)
   })
   if (!res.ok) return null

@@ -72,7 +72,7 @@ export default function DesignTab({ tab }: { tab: Tab }): React.JSX.Element {
           gap: 8
         }}
       >
-        <Table2 size={14} color="#6ea1d8" style={{ flexShrink: 0 }} />
+        <Table2 size={14} color="#22d3ee" style={{ flexShrink: 0 }} />
         <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-bright)' }}>
           {target.schema}.{target.name}
         </span>

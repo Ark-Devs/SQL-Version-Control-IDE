@@ -1,5 +1,5 @@
-appId: com.21ccare.sqlvcide
-productName: SQL Version Control IDE
+appId: com.arkdevs.arksql
+productName: ArkSQL
 directories:
   buildResources: build
   output: release
@@ -17,7 +17,7 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  shortcutName: SQL VC IDE
+  shortcutName: ArkSQL
 electronDownload:
   cache: .electron-cache
 npmRebuild: false
