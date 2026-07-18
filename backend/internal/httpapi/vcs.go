@@ -5,9 +5,11 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
+	"svcide/internal/db"
 	"svcide/internal/gitrepo"
 )
 
@@ -50,7 +52,7 @@ func mountVCS(r chi.Router, d *Deps) {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
 			}
-			repoInfo(w, d)
+			repoInfo(w, d, nil)
 		})
 
 		r.Post("/open", func(w http.ResponseWriter, req *http.Request) {
@@ -61,11 +63,12 @@ func mountVCS(r chi.Router, d *Deps) {
 				writeErr(w, http.StatusBadRequest, err)
 				return
 			}
-			if err := d.Repo.Open(body.Path); err != nil {
+			migrated, err := d.Repo.Open(body.Path)
+			if err != nil {
 				writeErr(w, http.StatusBadRequest, err)
 				return
 			}
-			repoInfo(w, d)
+			repoInfo(w, d, map[string]any{"migratedLayout": migrated})
 		})
 
 		r.Get("/info", func(w http.ResponseWriter, _ *http.Request) {
@@ -73,7 +76,7 @@ func mountVCS(r chi.Router, d *Deps) {
 				writeJSON(w, http.StatusOK, map[string]any{"open": false})
 				return
 			}
-			repoInfo(w, d)
+			repoInfo(w, d, nil)
 		})
 
 		r.Post("/sync", func(w http.ResponseWriter, req *http.Request) {
@@ -94,6 +97,73 @@ func mountVCS(r chi.Router, d *Deps) {
 				return d.Registry.Get(connID, database)
 			}
 			res, err := d.Repo.Sync(req.Context(), poolFor, man)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, res)
+		})
+
+		// Sync one object (the "live mirror"): after the user runs DDL, re-script
+		// that single object from the database into the worktree so git status/diff
+		// immediately reflects the change. No-ops safely (200 skipped) when no repo
+		// is open or the database isn't tracked by the manifest.
+		r.Post("/sync-object", func(w http.ResponseWriter, req *http.Request) {
+			var body struct {
+				Database string `json:"database"`
+				Schema   string `json:"schema"`
+				Name     string `json:"name"`
+			}
+			if err := decode(req, &body); err != nil {
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			if body.Database == "" || body.Name == "" {
+				writeErr(w, http.StatusBadRequest, errors.New("database and name are required"))
+				return
+			}
+			if body.Schema == "" {
+				body.Schema = "dbo"
+			}
+			if !d.Repo.IsOpen() {
+				writeJSON(w, http.StatusOK, map[string]any{"skipped": true, "reason": "no repository open"})
+				return
+			}
+			man, err := d.Repo.ReadManifest()
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			tracked := false
+			for _, name := range man.Databases {
+				if strings.EqualFold(name, body.Database) {
+					tracked = true
+					break
+				}
+			}
+			if !tracked {
+				writeJSON(w, http.StatusOK, map[string]any{"skipped": true, "reason": "database not tracked by repository"})
+				return
+			}
+			pool, err := d.Registry.Get(man.SourceConnID, body.Database)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			// try a programmable module first, then a table; nil ⇒ dropped object
+			obj, err := db.ScriptModule(req.Context(), pool, body.Schema, body.Name)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			if obj == nil {
+				obj, err = db.ScriptTable(req.Context(), pool, body.Schema, body.Name)
+				if err != nil {
+					writeErr(w, http.StatusInternalServerError, err)
+					return
+				}
+			}
+			res, err := d.Repo.SyncObject(body.Database, body.Schema, body.Name, obj, man)
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
@@ -124,6 +194,23 @@ func mountVCS(r chi.Router, d *Deps) {
 				return
 			}
 			writeJSON(w, http.StatusOK, st)
+		})
+
+		// Object status: per-object VC state (added/modified/deleted) derived
+		// from the git worktree status + manifest. Powers the M/A/D badges and
+		// deleted-object ghost rows in the explorer, distinct from /drift (which
+		// compares the live DB against the repo baseline before a sync).
+		r.Get("/object-status", func(w http.ResponseWriter, _ *http.Request) {
+			if !d.Repo.IsOpen() {
+				writeJSON(w, http.StatusOK, map[string]any{"objects": map[string]any{}})
+				return
+			}
+			objs, err := d.Repo.ObjectStatus()
+			if err != nil {
+				writeErr(w, statusFor(err), err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"objects": objs})
 		})
 
 		r.Post("/commit", func(w http.ResponseWriter, req *http.Request) {
@@ -195,7 +282,7 @@ func mountVCS(r chi.Router, d *Deps) {
 				writeErr(w, statusFor(err), err)
 				return
 			}
-			repoInfo(w, d)
+			repoInfo(w, d, nil)
 		})
 
 		r.Post("/merge", func(w http.ResponseWriter, req *http.Request) {
@@ -245,6 +332,41 @@ func mountVCS(r chi.Router, d *Deps) {
 			writeJSON(w, http.StatusOK, entries)
 		})
 
+		// Schema compare: diff the repo (at a ref) against a live target
+		// connection, scripting the target's objects in memory. Powers the
+		// Compare tab and its deploy-selected flow.
+		r.Post("/compare", func(w http.ResponseWriter, req *http.Request) {
+			var body struct {
+				Ref          string   `json:"ref"`
+				TargetConnID string   `json:"targetConnId"`
+				Databases    []string `json:"databases"`
+			}
+			if err := decode(req, &body); err != nil {
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			if body.Ref == "" {
+				body.Ref = "HEAD"
+			}
+			if body.TargetConnID == "" {
+				writeErr(w, http.StatusBadRequest, errors.New("targetConnId is required"))
+				return
+			}
+			if !d.Repo.IsOpen() {
+				writeErr(w, http.StatusBadRequest, gitrepo.ErrNoRepo)
+				return
+			}
+			poolFor := func(database string) (*sql.DB, error) {
+				return d.Registry.Get(body.TargetConnID, database)
+			}
+			res, err := d.Repo.Compare(req.Context(), poolFor, body.Ref, body.Databases)
+			if err != nil {
+				writeErr(w, statusFor(err), err)
+				return
+			}
+			writeJSON(w, http.StatusOK, res)
+		})
+
 		r.Get("/file", func(w http.ResponseWriter, req *http.Request) {
 			path := req.URL.Query().Get("path")
 			ref := req.URL.Query().Get("ref")
@@ -262,15 +384,25 @@ func mountVCS(r chi.Router, d *Deps) {
 	})
 }
 
-func repoInfo(w http.ResponseWriter, d *Deps) {
+func repoInfo(w http.ResponseWriter, d *Deps, extra map[string]any) {
 	branch, _ := d.Repo.CurrentBranch()
 	man, _ := d.Repo.ReadManifest()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"open":     true,
-		"path":     d.Repo.Path(),
-		"branch":   branch,
-		"manifest": man,
-	})
+	var databases []string
+	if man != nil {
+		databases = man.Databases
+	}
+	resp := map[string]any{
+		"open":            true,
+		"path":            d.Repo.Path(),
+		"branch":          branch,
+		"manifest":        man,
+		"sqlFolderExists": d.Repo.SQLFolderExists(),
+		"databases":       databases,
+	}
+	for k, v := range extra {
+		resp[k] = v
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func statusFor(err error) int {

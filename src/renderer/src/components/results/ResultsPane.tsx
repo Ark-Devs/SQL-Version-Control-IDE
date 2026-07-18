@@ -25,20 +25,24 @@ export default function ResultsPane({ snapshot, running }: Props): React.JSX.Ele
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 5,
-        padding: '6px 14px',
+        gap: 6,
+        padding: '7px 14px',
         cursor: 'pointer',
-        fontSize: 11,
-        fontWeight: 700,
+        fontFamily: 'var(--font-mono)',
+        fontSize: 10.5,
+        fontWeight: 600,
         textTransform: 'uppercase',
-        letterSpacing: 0.6,
+        letterSpacing: 1,
         borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
-        color: active ? 'var(--text-bright)' : 'var(--text-dim)'
+        color: active ? 'var(--accent)' : 'var(--text-dim)',
+        transition: 'color 0.12s var(--ease)'
       }}
     >
       {label}
     </div>
   )
+
+  const rowCount = activeSet?.rows?.length ?? 0
 
   return (
     <div
@@ -51,7 +55,14 @@ export default function ResultsPane({ snapshot, running }: Props): React.JSX.Ele
       }}
     >
       <div style={{ display: 'flex', background: 'var(--bg-panel-alt)', flexShrink: 0, alignItems: 'center', borderBottom: '1px solid var(--border)' }}>
-        {tabBtn(`Results${sets.length > 1 ? ` (${sets.length})` : ''}`, effectiveView === 'results', () => setView('results'))}
+        {tabBtn(
+          <>
+            Results
+            {sets.length > 0 && <span className="badge accent">{rowCount}</span>}
+          </>,
+          effectiveView === 'results',
+          () => setView('results')
+        )}
         {tabBtn(
           hasErrors ? (
             <>
@@ -159,6 +170,7 @@ function Grid({ set }: { set: ResultSet }): React.JSX.Element {
           return (
             <div
               key={vr.index}
+              className="grid-row"
               style={{
                 position: 'absolute',
                 top: 0,
@@ -191,9 +203,12 @@ function Grid({ set }: { set: ResultSet }): React.JSX.Element {
 }
 
 const headerCell: React.CSSProperties = {
-  padding: '4px 8px',
+  padding: '5px 8px',
+  fontFamily: 'var(--font-mono)',
   fontWeight: 600,
-  fontSize: 11.5,
+  fontSize: 10.5,
+  letterSpacing: 0.5,
+  color: 'var(--text-dim)',
   background: 'var(--grid-header)',
   borderRight: '1px solid var(--grid-line)',
   whiteSpace: 'nowrap',

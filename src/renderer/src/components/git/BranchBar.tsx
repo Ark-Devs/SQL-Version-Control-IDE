@@ -18,11 +18,12 @@ export default function BranchBar(): React.JSX.Element | null {
         style={{
           padding: '0 10px',
           cursor: 'pointer',
-          borderRight: '1px solid rgba(255,255,255,0.2)',
+          borderRight: '1px solid var(--border)',
           display: 'inline-flex',
           alignItems: 'center',
           gap: 5,
-          height: '100%'
+          height: '100%',
+          color: 'var(--accent-2)'
         }}
         title="Switch branch"
       >
@@ -34,9 +35,11 @@ export default function BranchBar(): React.JSX.Element | null {
             position: 'absolute',
             bottom: 24,
             left: 0,
-            background: 'var(--bg-panel-alt)',
-            border: '1px solid var(--border)',
-            boxShadow: '0 -4px 12px rgba(0,0,0,0.5)',
+            background: 'var(--bg-elevated)',
+            border: '1px solid var(--border-strong)',
+            borderRadius: 'var(--radius)',
+            boxShadow: '0 -8px 28px rgba(0,0,0,0.6)',
+            overflow: 'hidden',
             minWidth: 220,
             zIndex: 1000,
             color: 'var(--text)'

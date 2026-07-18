@@ -1,8 +1,8 @@
 <div align="center">
 
-# SQL Version Control IDE
+# ArkSQL
 
-**A desktop IDE for Microsoft SQL Server with Git built into its bones.**
+**Version-Controlled SQL** — a desktop IDE for Microsoft SQL Server with Git built into its bones.
 
 Version stored procedures on branches. Diff them. Merge them. Deploy any branch to any server.
 

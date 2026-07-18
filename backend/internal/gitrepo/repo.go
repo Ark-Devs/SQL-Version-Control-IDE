@@ -27,15 +27,18 @@ func NewManager() *Manager { return &Manager{} }
 
 var ErrNoRepo = errors.New("no repository is open")
 
-func (m *Manager) Open(path string) error {
+// Open opens an existing repository. If it uses the legacy DB/ layout it is
+// migrated to SQL/ in the worktree (left uncommitted); the returned bool
+// reports whether that migration happened.
+func (m *Manager) Open(path string) (bool, error) {
 	repo, err := git.PlainOpen(path)
 	if err != nil {
-		return err
+		return false, err
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.repo, m.path = repo, path
-	return nil
+	m.mu.Unlock()
+	return m.MigrateLayout()
 }
 
 // Init creates a new repository at path (creating the directory if needed)

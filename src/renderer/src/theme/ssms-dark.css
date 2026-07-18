@@ -1,55 +1,62 @@
 /* ============================================================
-   SQL VC IDE — design system (dark, SSMS-inspired, VS-grade)
+   SQL VC IDE — design system ("deep space" dark, neon accent)
    Tokens first; shared primitives (.btn, .input, .modal…) below.
+   Identity: cyan = data/queries, violet = version control.
    ============================================================ */
 
 :root {
-  /* surfaces */
-  --bg-app: #1b1d21;
-  --bg-panel: #212429;
-  --bg-panel-alt: #262a30;
-  --bg-elevated: #2b3037;
-  --bg-input: #16181c;
-  --bg-hover: rgba(255, 255, 255, 0.045);
-  --bg-active: rgba(255, 255, 255, 0.08);
-  --bg-selected: #094771;
-  --bg-titlebar: #262a30;
+  /* surfaces — near-black with a cold blue undertone */
+  --bg-app: #07090e;
+  --bg-panel: #0a0d13;
+  --bg-panel-alt: #0d1118;
+  --bg-elevated: #121724;
+  --bg-input: #05070b;
+  --bg-hover: rgba(148, 183, 255, 0.05);
+  --bg-active: rgba(148, 183, 255, 0.09);
+  --bg-selected: rgba(34, 211, 238, 0.12);
+  --bg-titlebar: #0d1118;
 
   /* lines */
-  --border: #33383f;
-  --border-strong: #454b54;
-  --border-focus: #2d7dd2;
+  --border: #1a2130;
+  --border-strong: #273349;
+  --border-focus: #22d3ee;
 
   /* text */
-  --text: #d7dae0;
-  --text-dim: #8b919a;
-  --text-faint: #62676f;
-  --text-bright: #f0f2f5;
+  --text: #cbd6e5;
+  --text-dim: #7e8ba1;
+  --text-faint: #4c586d;
+  --text-bright: #eef3fb;
 
   /* brand + semantics */
-  --accent: #2d7dd2;
-  --accent-hover: #3d8de2;
-  --accent-muted: rgba(45, 125, 210, 0.14);
-  --statusbar: #0e639c;
-  --error: #f47067;
-  --warning: #d9a40b;
-  --success: #4cbb5f;
-  --info: #58a6ff;
+  --accent: #22d3ee;
+  --accent-hover: #55e0f7;
+  --accent-muted: rgba(34, 211, 238, 0.13);
+  --accent-2: #a78bfa;
+  --accent-2-muted: rgba(167, 139, 250, 0.14);
+  --statusbar: #0a0d13;
+  --error: #fb7185;
+  --warning: #fbbf24;
+  --success: #34d399;
+  --info: #38bdf8;
 
   /* results grid */
-  --grid-header: #262a30;
-  --grid-line: #2e333a;
-  --grid-stripe: rgba(255, 255, 255, 0.015);
+  --grid-header: #0d1118;
+  --grid-line: #161d2b;
+  --grid-stripe: rgba(148, 183, 255, 0.02);
 
   /* geometry + type */
-  --radius: 5px;
-  --radius-sm: 3px;
+  --radius: 8px;
+  --radius-sm: 5px;
   --font-ui: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'Cascadia Code', Consolas, 'Courier New', monospace;
 
-  /* elevation */
-  --shadow-menu: 0 6px 24px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--border);
-  --shadow-modal: 0 16px 56px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border-strong);
+  /* elevation + glow */
+  --shadow-menu: 0 8px 28px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--border-strong);
+  --shadow-modal: 0 20px 70px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--border-strong);
+  --glow-accent: 0 0 16px rgba(34, 211, 238, 0.3);
+  --glow-success: 0 0 8px rgba(52, 211, 153, 0.7);
+  --glow-error: 0 0 8px rgba(251, 113, 133, 0.7);
+  --glow-warning: 0 0 8px rgba(251, 191, 36, 0.7);
 
   /* motion */
   --ease: cubic-bezier(0.2, 0, 0, 1);
@@ -86,7 +93,7 @@ button,
   font-weight: 500;
   color: var(--text);
   background: var(--bg-elevated);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   padding: 4px 12px;
   cursor: pointer;
@@ -95,21 +102,22 @@ button,
   justify-content: center;
   gap: 6px;
   line-height: 1.5;
-  transition: background 0.12s var(--ease), border-color 0.12s var(--ease), color 0.12s var(--ease);
+  transition: background 0.12s var(--ease), border-color 0.12s var(--ease), color 0.12s var(--ease),
+    box-shadow 0.12s var(--ease);
 }
 
 button:hover:not(:disabled),
 .btn:hover:not(:disabled) {
-  background: #333941;
-  border-color: var(--border-strong);
+  background: #182031;
+  border-color: #34435f;
 }
 
 button:active:not(:disabled) {
-  background: #3a414a;
+  background: #1d2739;
 }
 
 button:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: default;
 }
 
@@ -122,15 +130,23 @@ textarea:focus-visible {
   outline-offset: -1px;
 }
 
+/* the one loud element: cyan, glowing */
 button.primary {
-  background: var(--accent);
+  background: linear-gradient(180deg, #2fd9f2, #0eb4cf);
   border-color: transparent;
-  color: #fff;
+  color: #032830;
+  font-weight: 600;
+  box-shadow: var(--glow-accent);
 }
 
 button.primary:hover:not(:disabled) {
-  background: var(--accent-hover);
+  background: linear-gradient(180deg, #55e0f7, #1fc4de);
   border-color: transparent;
+  box-shadow: 0 0 22px rgba(34, 211, 238, 0.45);
+}
+
+button.primary:disabled {
+  box-shadow: none;
 }
 
 button.danger {
@@ -179,7 +195,7 @@ textarea {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 4px 8px;
-  transition: border-color 0.12s var(--ease);
+  transition: border-color 0.12s var(--ease), box-shadow 0.12s var(--ease);
 }
 
 input::placeholder,
@@ -191,6 +207,7 @@ input:focus,
 select:focus,
 textarea:focus {
   border-color: var(--border-focus);
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.25), 0 0 12px rgba(34, 211, 238, 0.12);
   outline: none;
 }
 
@@ -204,7 +221,7 @@ input[type='radio'] {
 
 select {
   appearance: none;
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238b919a' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%237e8ba1' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 8px center;
   padding-right: 26px;
@@ -215,7 +232,8 @@ select {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(8, 9, 11, 0.6);
+  background: rgba(3, 5, 9, 0.72);
+  backdrop-filter: blur(2px);
   display: grid;
   place-items: center;
   z-index: 900;
@@ -299,8 +317,8 @@ select {
 }
 
 .menu-item:hover:not(.disabled) {
-  background: var(--accent);
-  color: #fff;
+  background: var(--accent-muted);
+  color: var(--accent-hover);
 }
 
 .menu-item.disabled {
@@ -335,6 +353,7 @@ select {
 .tree-row.selected {
   background: var(--bg-selected);
   color: var(--text-bright);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .tree-row .chevron {
@@ -355,19 +374,29 @@ select {
 /* ---------- misc ---------- */
 
 .badge {
-  font-size: 10.5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
   font-weight: 600;
-  padding: 1px 7px;
+  letter-spacing: 0.4px;
+  padding: 1px 8px;
   border-radius: 999px;
   background: var(--bg-active);
+  border: 1px solid var(--border-strong);
   color: var(--text-dim);
 }
 
+.badge.accent {
+  background: var(--accent-muted);
+  border-color: rgba(34, 211, 238, 0.35);
+  color: var(--accent);
+}
+
 .section-label {
-  font-size: 10.5px;
-  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.7px;
+  letter-spacing: 1px;
   color: var(--text-dim);
 }
 
@@ -377,9 +406,47 @@ select {
   line-height: 1.5;
 }
 
+/* live status dot (status bar, connection state) */
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--success);
+  box-shadow: var(--glow-success);
+}
+
+.status-dot.busy {
+  background: var(--warning);
+  box-shadow: var(--glow-warning);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+.status-dot.error {
+  background: var(--error);
+  box-shadow: var(--glow-error);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-dot.busy {
+    animation: none;
+  }
+}
+
+/* results grid row hover */
+.grid-row:hover > div {
+  background: var(--bg-hover);
+}
+
 kbd {
-  font-family: var(--font-ui);
-  font-size: 10.5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
   padding: 1px 5px;
   border: 1px solid var(--border-strong);
   border-bottom-width: 2px;
@@ -389,8 +456,8 @@ kbd {
 }
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
 }
 
 ::-webkit-scrollbar-track {
@@ -398,14 +465,14 @@ kbd {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(148, 183, 255, 0.14);
   border: 3px solid transparent;
   background-clip: content-box;
   border-radius: 6px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(148, 183, 255, 0.28);
   background-clip: content-box;
   border: 3px solid transparent;
   border-radius: 6px;

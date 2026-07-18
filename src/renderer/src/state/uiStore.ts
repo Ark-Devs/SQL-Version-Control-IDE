@@ -23,6 +23,14 @@ interface UiState {
   searchScope: SearchScope | null
   openSearch: (scope?: SearchScope) => void
   closeSearch: () => void
+
+  /**
+   * Set by App.tsx when the native app menu sends a command that needs a
+   * Shell-level dialog or sidebar switch (e.g. 'connections', 'settings',
+   * 'view-git'). Shell.tsx consumes it once and clears it back to null.
+   */
+  menuRequest: string | null
+  setMenuRequest: (request: string | null) => void
 }
 
 export const useUi = create<UiState>((set, get) => ({
@@ -40,5 +48,8 @@ export const useUi = create<UiState>((set, get) => ({
 
   searchScope: null,
   openSearch: (scope) => set({ searchScope: scope ?? {} }),
-  closeSearch: () => set({ searchScope: null })
+  closeSearch: () => set({ searchScope: null }),
+
+  menuRequest: null,
+  setMenuRequest: (request) => set({ menuRequest: request })
 }))

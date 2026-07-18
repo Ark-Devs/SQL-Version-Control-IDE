@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Check, Download, FolderOpen, GitMerge, RefreshCw, Rocket } from 'lucide-react'
+import { ArrowLeftRight, Check, Download, FolderOpen, GitMerge, RefreshCw, Rocket } from 'lucide-react'
 import { useGit } from '../../state/gitStore'
 import { useConnections } from '../../state/connectionsStore'
 import { useExplorer } from '../../state/explorerStore'
-import { useTabs } from '../../state/tabsStore'
+import { openCompareTab, useTabs } from '../../state/tabsStore'
 import { gitApi, type FileChange } from '../../api/git'
 import ContextMenu, { MenuItem } from '../common/ContextMenu'
 import HistoryDialog from './HistoryDialog'
@@ -71,6 +71,19 @@ export default function GitPanel(): React.JSX.Element {
     })
   }
 
+  // Baseline (first-time) sync: run the normal sync, then pre-fill the commit
+  // message so the user can review and commit the freshly scripted SQL/ tree.
+  const runBaselineSync = async (): Promise<void> => {
+    try {
+      const summary = await git.sync()
+      setStatusMsg(summary)
+      const server = useGit.getState().info.manifest?.sourceServer
+      setMessage(`Baseline sync from ${server || 'database'}`)
+    } catch {
+      /* stored */
+    }
+  }
+
   if (!git.info.open) {
     return (
       <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -108,8 +121,68 @@ export default function GitPanel(): React.JSX.Element {
   const stateColor = { added: 'var(--success)', modified: 'var(--warning)', deleted: 'var(--error)' }
   const stateLetter = { added: 'A', modified: 'M', deleted: 'D' }
 
+  const dbList = git.info.databases ?? git.info.manifest?.databases ?? []
+  // Deterministic first-sync: repo open + manifest has databases + no SQL/ folder.
+  const firstSync = dbList.length > 0 && git.info.sqlFolderExists === false
+  const mono = { fontFamily: 'var(--font-mono)', fontSize: '0.92em' }
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {git.info.migratedLayout && (
+        <div
+          style={{
+            margin: '10px 10px 0',
+            padding: '8px 10px',
+            borderRadius: 'var(--radius-sm)',
+            background: 'var(--accent-2-muted)',
+            border: '1px solid rgba(167, 139, 250, 0.35)',
+            fontSize: 11.5,
+            color: 'var(--text)',
+            lineHeight: 1.5
+          }}
+        >
+          Repository layout was migrated from <span style={mono}>DB/</span> to <span style={mono}>SQL/</span> — review and
+          commit the change.
+        </div>
+      )}
+
+      {firstSync && (
+        <div
+          style={{
+            margin: '10px 10px 0',
+            padding: 12,
+            borderRadius: 'var(--radius)',
+            background: 'var(--bg-elevated)',
+            border: '1px solid var(--accent-2)',
+            boxShadow: '0 0 16px rgba(167, 139, 250, 0.18)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8
+          }}
+        >
+          <span
+            className="badge"
+            style={{
+              alignSelf: 'flex-start',
+              background: 'var(--accent-2-muted)',
+              borderColor: 'rgba(167, 139, 250, 0.35)',
+              color: 'var(--accent-2)'
+            }}
+          >
+            FIRST SYNC
+          </span>
+          <div style={{ fontSize: 12.5, color: 'var(--text-bright)', lineHeight: 1.5 }}>
+            This repository has no <span style={mono}>SQL/</span> folder yet. Sync now to script all objects from{' '}
+            <span style={{ color: 'var(--accent-2)', fontWeight: 600 }}>{dbList.join(', ')}</span> into{' '}
+            <span style={mono}>SQL/</span>?
+          </div>
+          <button className="primary" disabled={git.busy !== null} onClick={() => void runBaselineSync()}>
+            <RefreshCw size={13} className={git.busy === 'sync' ? 'spin' : undefined} />
+            {git.busy === 'sync' ? 'Syncing…' : 'Sync now'}
+          </button>
+        </div>
+      )}
+
       <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={{ fontSize: 11, color: 'var(--text-dim)', userSelect: 'text' }} title={git.info.path}>
           {(git.info.manifest?.databases ?? []).join(', ')} → {git.info.path?.split(/[\\/]/).slice(-1)[0]}
@@ -144,6 +217,13 @@ export default function GitPanel(): React.JSX.Element {
           title="Deploy a branch's objects to any server (CREATE OR ALTER in a transaction)"
         >
           <Rocket size={13} /> Deploy…
+        </button>
+        <button
+          onClick={() => openCompareTab()}
+          title="Compare the repo at a ref against a live target server, then deploy selected objects"
+          style={{ color: 'var(--accent-2)', borderColor: 'var(--accent-2)' }}
+        >
+          <ArrowLeftRight size={13} /> Schema compare…
         </button>
         <button
           disabled={git.busy !== null}

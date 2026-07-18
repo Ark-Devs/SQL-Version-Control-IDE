@@ -11,16 +11,17 @@ export default function StatusBar(): React.JSX.Element {
 
   const exec = activeTab?.execution
   const totalRows = exec?.snapshot?.sets?.reduce((n, s) => n + (s.rows?.length ?? 0), 0) ?? 0
+  const hasError = !!exec?.snapshot?.done && !!exec.snapshot.messages?.some((m) => m.kind === 'error')
 
   const item = (content: React.ReactNode): React.JSX.Element => (
     <span
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 5,
+        gap: 6,
         padding: '0 10px',
         height: '100%',
-        borderRight: '1px solid rgba(255,255,255,0.2)'
+        borderRight: '1px solid var(--border)'
       }}
     >
       {content}
@@ -30,33 +31,43 @@ export default function StatusBar(): React.JSX.Element {
   return (
     <div
       style={{
-        height: 24,
-        background: exec?.running ? '#b35900' : 'var(--statusbar)',
-        color: '#fff',
+        height: 26,
+        background: 'var(--statusbar)',
+        borderTop: '1px solid var(--border)',
+        color: 'var(--text-dim)',
         display: 'flex',
         alignItems: 'center',
-        fontSize: 12,
+        fontFamily: 'var(--font-mono)',
+        fontSize: 11,
+        letterSpacing: 0.3,
         flexShrink: 0
       }}
     >
-      {item(exec?.running ? 'Executing…' : 'Ready')}
+      {item(
+        <>
+          <span className={`status-dot${exec?.running ? ' busy' : hasError ? ' error' : ''}`} />
+          <span style={{ color: exec?.running ? 'var(--warning)' : hasError ? 'var(--error)' : 'var(--success)' }}>
+            {exec?.running ? 'Executing…' : hasError ? 'Errors' : 'Ready'}
+          </span>
+        </>
+      )}
       <BranchBar />
       {profile &&
         item(
           <>
-            <Server size={12} />
+            <Server size={11} />
             {profile.name} ({profile.server})
           </>
         )}
       {activeTab?.database &&
         item(
           <>
-            <Database size={12} />
+            <Database size={11} />
             {activeTab.database}
           </>
         )}
       <div style={{ flex: 1 }} />
-      {exec?.snapshot && !exec.running && item(`${totalRows} rows`)}
+      {exec?.snapshot && !exec.running && item(<span style={{ color: 'var(--accent)' }}>{totalRows} rows</span>)}
       {exec?.snapshot && item(`${(exec.snapshot.elapsedMs / 1000).toFixed(2)}s`)}
     </div>
   )

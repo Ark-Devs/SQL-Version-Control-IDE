@@ -26,8 +26,8 @@ export default function Toolbar({ onManageConnections, onOpenSettings }: Props):
         display: 'flex',
         alignItems: 'center',
         gap: 6,
-        height: 38,
-        padding: '0 8px',
+        height: 40,
+        padding: '0 10px',
         background: 'var(--bg-panel-alt)',
         borderBottom: '1px solid var(--border)',
         flexShrink: 0
@@ -70,7 +70,7 @@ export default function Toolbar({ onManageConnections, onOpenSettings }: Props):
             useTabs.getState().setTabConnection(activeTab.id, p?.id, p?.database)
             if (p) void useExplorer.getState().loadDatabases(p.id)
           }}
-          style={{ minWidth: 160 }}
+          style={{ minWidth: 160, fontFamily: 'var(--font-mono)', fontSize: 11.5 }}
           title="Connection for this tab"
         >
           <option value="">(no connection)</option>
@@ -91,7 +91,7 @@ export default function Toolbar({ onManageConnections, onOpenSettings }: Props):
             activeTab &&
             useTabs.getState().setTabConnection(activeTab.id, activeTab.connId, e.target.value || undefined)
           }
-          style={{ minWidth: 140 }}
+          style={{ minWidth: 140, fontFamily: 'var(--font-mono)', fontSize: 11.5 }}
           title="Database for this tab"
         >
           <option value="">(default)</option>

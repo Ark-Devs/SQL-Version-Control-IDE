@@ -12,6 +12,9 @@ import (
 // Settings are per-user app preferences stored in %APPDATA%\SqlVcIde\settings.json.
 type Settings struct {
 	AuthorName string `json:"authorName"`
+	// MirrorOnExecute mirrors successful DDL against a tracked database straight
+	// into the repo worktree. Defaults to true (see defaultedMirror on load).
+	MirrorOnExecute bool `json:"mirrorOnExecute"`
 }
 
 type Store struct {
@@ -34,6 +37,10 @@ func NewStore() (*Store, error) {
 		return nil, err
 	}
 	st := &Store{path: filepath.Join(dir, "settings.json")}
+	// Default before unmarshal so an absent "mirrorOnExecute" key stays true
+	// (json.Unmarshal only overwrites keys present in the file), while an
+	// explicit false on disk is still honored.
+	st.s.MirrorOnExecute = true
 	if data, err := os.ReadFile(st.path); err == nil {
 		_ = json.Unmarshal(data, &st.s)
 	}

@@ -5,6 +5,7 @@ import { useSettings } from '../../state/settingsStore'
 export default function SettingsDialog({ onClose }: { onClose: () => void }): React.JSX.Element {
   const { settings, save } = useSettings()
   const [authorName, setAuthorName] = useState(settings.authorName)
+  const [mirrorOnExecute, setMirrorOnExecute] = useState(settings.mirrorOnExecute)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -12,7 +13,7 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }): Re
     setBusy(true)
     setError('')
     try {
-      await save({ authorName: authorName.trim() })
+      await save({ authorName: authorName.trim(), mirrorOnExecute })
       onClose()
     } catch (err) {
       setError(String(err))
@@ -49,6 +50,18 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }): Re
       </label>
       <div className="hint">
         Used for the <code>-- Author:</code> and <code>-- Updated by:</code> lines in object headers.
+      </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+        <input
+          type="checkbox"
+          checked={mirrorOnExecute}
+          onChange={(e) => setMirrorOnExecute(e.target.checked)}
+        />
+        <span>Mirror executed changes into repository</span>
+      </label>
+      <div className="hint">
+        When you run CREATE/ALTER/DROP against a tracked database, the repo files update
+        automatically.
       </div>
       {error && <div style={{ color: 'var(--error)', fontSize: 12 }}>{error}</div>}
     </Modal>
