@@ -1,6 +1,32 @@
 # Changelog
 
-All notable changes to SQL Version Control IDE.
+All notable changes to ArkSQL.
+
+## [0.2.1] — 2026-07-18
+
+### ArkSQL
+- The IDE is now **ArkSQL** ("Version-Controlled SQL") with a new app icon,
+  installer branding, and a deep-space neon design overhaul: cyan accents for
+  data/queries, violet for version control, glowing status indicators, and a
+  new Monaco syntax theme.
+- Full SSMS-style application menu (File / Edit / View / Git / Query / Tools /
+  Window / Help) with keyboard accelerators and context-aware enabling.
+
+### Version control
+- **`SQL/` repo layout**: objects now live under `SQL/<database>/<schema>/…`;
+  legacy `DB/` repos migrate automatically on open (left uncommitted for
+  review). A repo without a `SQL/` folder triggers a first-sync prompt with a
+  baseline-commit flow.
+- **VS Code-style status in the Object Explorer**: modified objects amber (M),
+  new objects green (A), dropped objects as red strikethrough ghost rows (D),
+  with change-count badges on databases and folders.
+- **Live mirror**: successful `CREATE`/`ALTER`/`DROP` against a tracked
+  database instantly re-scripts the object into the repo (toggle in Settings),
+  so git status always reflects the database.
+- **Schema Compare** (Tools menu or Git panel): compare any ref against a
+  target connection (e.g. production), see what's missing/different/extra per
+  object with side-by-side diffs, and deploy the selected objects through the
+  transactional deploy pipeline.
 
 ## [0.2.0] — 2026-07-07
 

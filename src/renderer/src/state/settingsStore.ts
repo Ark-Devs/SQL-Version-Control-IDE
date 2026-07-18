@@ -3,6 +3,8 @@ import { get, put } from '../api/client'
 
 export interface AppSettings {
   authorName: string
+  /** mirror successful DDL against a tracked database into the repo worktree */
+  mirrorOnExecute: boolean
 }
 
 interface SettingsState {
@@ -12,7 +14,7 @@ interface SettingsState {
 }
 
 export const useSettings = create<SettingsState>((set) => ({
-  settings: { authorName: '' },
+  settings: { authorName: '', mirrorOnExecute: true },
 
   load: async () => {
     const s = await get<AppSettings>('/settings')

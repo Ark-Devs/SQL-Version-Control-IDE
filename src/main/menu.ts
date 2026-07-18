@@ -86,6 +86,12 @@ function buildTemplate(): MenuItemConstructorOptions[] {
       ]
     },
     {
+      label: 'Tools',
+      submenu: [
+        { label: 'Schema Compare…', enabled: state.repoOpen, click: () => send('schema-compare') }
+      ]
+    },
+    {
       label: 'Window',
       submenu: [
         { role: 'minimize' },

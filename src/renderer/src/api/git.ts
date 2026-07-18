@@ -72,6 +72,16 @@ export interface SyncResult {
   encrypted: string[] | null
 }
 
+/** Result of mirroring a single object into the repo (POST /repo/sync-object). */
+export interface SyncObjectResult {
+  skipped: boolean
+  reason?: string
+  written: boolean
+  deleted: boolean
+  encrypted: boolean
+  path?: string
+}
+
 const enc = encodeURIComponent
 
 export const gitApi = {
@@ -80,6 +90,8 @@ export const gitApi = {
     post<RepoInfo>('/repo/init', { path, connId, databases }),
   open: (path: string) => post<RepoInfo>('/repo/open', { path }),
   sync: () => post<SyncResult>('/repo/sync', {}),
+  syncObject: (database: string, schema: string, name: string) =>
+    post<SyncObjectResult>('/repo/sync-object', { database, schema, name }),
   drift: (connId: string, db: string) =>
     get<DriftReport>(`/repo/drift/${enc(connId)}/${enc(db)}`),
   changes: () => get<FileChange[] | null>('/repo/changes'),

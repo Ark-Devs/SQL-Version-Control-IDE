@@ -4,7 +4,7 @@ import { gitApi } from './api/git'
 import { useConnections } from './state/connectionsStore'
 import { useGit } from './state/gitStore'
 import { useSettings } from './state/settingsStore'
-import { useTabs } from './state/tabsStore'
+import { openCompareTab, useTabs } from './state/tabsStore'
 import { useUi } from './state/uiStore'
 import Shell from './components/layout/Shell'
 import SearchDialog from './components/search/SearchDialog'
@@ -113,6 +113,9 @@ export default function App(): React.JSX.Element {
             .fetch('origin', '')
             .then(() => useGit.getState().refresh())
             .catch((err) => alert(String(err)))
+          break
+        case 'schema-compare':
+          openCompareTab()
           break
         case 'check-updates':
           void checkForUpdatesManually()

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FileCode2, GitCompare, Table2, X } from 'lucide-react'
+import { ArrowLeftRight, FileCode2, GitCompare, Table2, X } from 'lucide-react'
 import type { Tab } from '../../state/tabsStore'
 import { useTabs } from '../../state/tabsStore'
 
@@ -13,6 +13,7 @@ function tabColor(t: Tab, active: boolean): { color: string; title: string } {
 }
 
 function TabIcon({ kind }: { kind: Tab['kind'] }): React.JSX.Element {
+  if (kind === 'compare') return <ArrowLeftRight size={13} />
   if (kind === 'diff') return <GitCompare size={13} />
   if (kind === 'design') return <Table2 size={13} />
   return <FileCode2 size={13} />

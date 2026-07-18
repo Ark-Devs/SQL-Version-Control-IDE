@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Check, Download, FolderOpen, GitMerge, RefreshCw, Rocket } from 'lucide-react'
+import { ArrowLeftRight, Check, Download, FolderOpen, GitMerge, RefreshCw, Rocket } from 'lucide-react'
 import { useGit } from '../../state/gitStore'
 import { useConnections } from '../../state/connectionsStore'
 import { useExplorer } from '../../state/explorerStore'
-import { useTabs } from '../../state/tabsStore'
+import { openCompareTab, useTabs } from '../../state/tabsStore'
 import { gitApi, type FileChange } from '../../api/git'
 import ContextMenu, { MenuItem } from '../common/ContextMenu'
 import HistoryDialog from './HistoryDialog'
@@ -217,6 +217,13 @@ export default function GitPanel(): React.JSX.Element {
           title="Deploy a branch's objects to any server (CREATE OR ALTER in a transaction)"
         >
           <Rocket size={13} /> Deploy…
+        </button>
+        <button
+          onClick={() => openCompareTab()}
+          title="Compare the repo at a ref against a live target server, then deploy selected objects"
+          style={{ color: 'var(--accent-2)', borderColor: 'var(--accent-2)' }}
+        >
+          <ArrowLeftRight size={13} /> Schema compare…
         </button>
         <button
           disabled={git.busy !== null}

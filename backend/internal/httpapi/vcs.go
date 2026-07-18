@@ -332,6 +332,41 @@ func mountVCS(r chi.Router, d *Deps) {
 			writeJSON(w, http.StatusOK, entries)
 		})
 
+		// Schema compare: diff the repo (at a ref) against a live target
+		// connection, scripting the target's objects in memory. Powers the
+		// Compare tab and its deploy-selected flow.
+		r.Post("/compare", func(w http.ResponseWriter, req *http.Request) {
+			var body struct {
+				Ref          string   `json:"ref"`
+				TargetConnID string   `json:"targetConnId"`
+				Databases    []string `json:"databases"`
+			}
+			if err := decode(req, &body); err != nil {
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			if body.Ref == "" {
+				body.Ref = "HEAD"
+			}
+			if body.TargetConnID == "" {
+				writeErr(w, http.StatusBadRequest, errors.New("targetConnId is required"))
+				return
+			}
+			if !d.Repo.IsOpen() {
+				writeErr(w, http.StatusBadRequest, gitrepo.ErrNoRepo)
+				return
+			}
+			poolFor := func(database string) (*sql.DB, error) {
+				return d.Registry.Get(body.TargetConnID, database)
+			}
+			res, err := d.Repo.Compare(req.Context(), poolFor, body.Ref, body.Databases)
+			if err != nil {
+				writeErr(w, statusFor(err), err)
+				return
+			}
+			writeJSON(w, http.StatusOK, res)
+		})
+
 		r.Get("/file", func(w http.ResponseWriter, req *http.Request) {
 			path := req.URL.Query().Get("path")
 			ref := req.URL.Query().Get("ref")

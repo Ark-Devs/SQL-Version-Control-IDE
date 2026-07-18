@@ -1,7 +1,10 @@
 import { create } from 'zustand'
 import { queryApi } from '../api/endpoints'
+import { gitApi } from '../api/git'
 import type { QuerySnapshot } from '../api/types'
 import { injectChangelog, isModuleDdl, moduleName } from '../utils/changelog'
+import { detectDdlObjects } from '../utils/ddl'
+import { useGit } from './gitStore'
 import { useSettings } from './settingsStore'
 import { useUi } from './uiStore'
 
@@ -14,7 +17,7 @@ export interface ExecutionState {
 export interface Tab {
   id: string
   title: string
-  kind?: 'sql' | 'diff' | 'design'
+  kind?: 'sql' | 'diff' | 'design' | 'compare'
   connId?: string
   database?: string
   content: string
@@ -48,6 +51,38 @@ interface TabsState {
 }
 
 const POLL_MS = 250
+
+/**
+ * Live mirror: after a successful execution against a repo-tracked database,
+ * re-script any objects touched by DDL into the repo worktree so git status
+ * always reflects the database. Best-effort and fully non-blocking — failures
+ * only warn, never disturb the query UX.
+ */
+async function mirrorExecutedDdl(tab: Tab, sql: string, snap: QuerySnapshot): Promise<void> {
+  try {
+    if (!useSettings.getState().settings.mirrorOnExecute) return
+    if (snap.messages?.some((m) => m.kind === 'error')) return
+    const git = useGit.getState()
+    const man = git.info.manifest
+    if (!git.info.open || !man || man.sourceConnId !== tab.connId) return
+    const database = tab.database ?? ''
+    if (!database || !man.databases?.includes(database)) return
+
+    const objects = detectDdlObjects(sql)
+    if (objects.length === 0) return
+    for (const o of objects) {
+      try {
+        await gitApi.syncObject(database, o.schema, o.name)
+      } catch (err) {
+        console.warn(`live mirror: sync-object failed for ${o.schema}.${o.name}:`, err)
+      }
+    }
+    await useGit.getState().loadObjectStatus()
+    void useGit.getState().refresh()
+  } catch (err) {
+    console.warn('live mirror skipped:', err)
+  }
+}
 
 export const useTabs = create<TabsState>((set, get) => {
   const patchTab = (id: string, patch: Partial<Tab>): void => {
@@ -151,7 +186,10 @@ export const useTabs = create<TabsState>((set, get) => {
         const cur = get().tabs.find((t) => t.id === id)
         if (!cur || cur.execution?.id !== executionId) return
         patchTab(id, { execution: { id: executionId, running: !snap.done, snapshot: snap } })
-        if (snap.done) return
+        if (snap.done) {
+          void mirrorExecutedDdl(cur, sql, snap)
+          return
+        }
         await new Promise((r) => setTimeout(r, POLL_MS))
       }
     },
@@ -162,3 +200,17 @@ export const useTabs = create<TabsState>((set, get) => {
     }
   }
 })
+
+/**
+ * Open the single schema-compare tab, focusing the existing one if present.
+ * Compare state lives inside the CompareTab component, so one tab is enough.
+ */
+export function openCompareTab(): void {
+  const tabs = useTabs.getState()
+  const existing = tabs.tabs.find((t) => t.kind === 'compare')
+  if (existing) {
+    tabs.setActive(existing.id)
+    return
+  }
+  tabs.openTab({ kind: 'compare', title: 'Schema Compare' })
+}
