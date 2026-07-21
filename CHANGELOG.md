@@ -2,6 +2,13 @@
 
 All notable changes to ArkSQL.
 
+## [0.2.2] — 2026-07-21
+
+### Version control
+- **Repo-scoped Object Explorer**: while a repo is open, the explorer now
+  shows only that repo's source connection and the databases it tracks,
+  auto-expanded on open, instead of every saved connection and database.
+
 ## [0.2.1] — 2026-07-18
 
 ### ArkSQL

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChevronRight, Plus, Search, X } from 'lucide-react'
 import { useConnections } from '../../state/connectionsStore'
 import { useExplorer } from '../../state/explorerStore'
@@ -44,6 +44,19 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
   const [newObject, setNewObject] = useState<NewObjectTarget | null>(null)
 
   const f = filter.trim().toLowerCase()
+
+  // ---------- repo-scoped browsing ----------
+  // While a repo is open, the explorer shows only its connection and the
+  // databases the repo tracks, instead of every saved connection.
+  useEffect(() => {
+    if (!repoOpen || !repoConnId) return
+    const connKey = `conn|${repoConnId}`
+    setExpanded((prev) => (prev.has(connKey) ? prev : new Set(prev).add(connKey)))
+    void explorer.loadDatabases(repoConnId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repoOpen, repoConnId])
+
+  const visibleProfiles = repoOpen && repoConnId ? profiles.filter((p) => p.id === repoConnId) : profiles
 
   // ---------- git-status coloring (VS Code style M/A/D) ----------
   // Only applies to databases the open repo actually tracks; every other
@@ -900,7 +913,8 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
   // ---------- connection node ----------
   const renderConnection = (p: Profile): React.JSX.Element => {
     const connKey = `conn|${p.id}`
-    const dbs = explorer.databases[p.id]
+    const scoped = repoOpen && repoConnId === p.id && repoDatabases
+    const dbs = scoped ? explorer.databases[p.id]?.filter((d) => repoDatabases!.includes(d)) : explorer.databases[p.id]
     return (
       <div key={connKey}>
         {row(connKey, 0, Icons.server, `${p.name} (${p.server})`, {
@@ -951,7 +965,9 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
           flexShrink: 0
         }}
       >
-        <span className="section-label">Object Explorer</span>
+        <span className="section-label" title={repoOpen ? 'Showing only the open repo’s connection and databases' : undefined}>
+          Object Explorer{repoOpen ? ' — repo' : ''}
+        </span>
         <button className="icon" title="Add connection" onClick={onAddConnection}>
           <Plus size={16} />
         </button>
@@ -986,7 +1002,12 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
             </a>
           </div>
         )}
-        {profiles.map(renderConnection)}
+        {profiles.length > 0 && repoOpen && visibleProfiles.length === 0 && (
+          <div style={{ padding: 12, color: 'var(--text-dim)' }}>
+            This repo's source connection isn't in your saved connections anymore.
+          </div>
+        )}
+        {visibleProfiles.map(renderConnection)}
       </div>
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
       {newObject && <NewObjectDialog target={newObject} onClose={() => setNewObject(null)} />}
