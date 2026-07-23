@@ -23,6 +23,8 @@ interface GitState {
 
   refresh: () => Promise<void>
   loadDrift: (connId: string, db: string) => Promise<void>
+  /** recompute drift for every loaded database (after branch operations) */
+  refreshDrift: () => Promise<void>
   loadObjectStatus: () => Promise<void>
   openRepo: (path: string) => Promise<void>
   initRepo: (path: string, connId: string, databases: string[]) => Promise<void>
@@ -89,6 +91,21 @@ export const useGit = create<GitState>((set, get) => {
 
     refresh: () => wrap('refresh', reload),
 
+    // Branch operations swap the baseline files under the drift comparison, so
+    // stale reports would show wrong colors (e.g. back on main, the DB is ahead
+    // of main — that must appear immediately). Recompute for every database the
+    // user had loaded.
+    refreshDrift: async () => {
+      const keys = Object.keys(get().drift)
+      set({ drift: {} })
+      await Promise.all(
+        keys.map((k) => {
+          const [connId, db] = k.split('|')
+          return get().loadDrift(connId, db)
+        })
+      )
+    },
+
     // fire-and-forget from the explorer; scripts the DB server-side, so no spinner
     loadDrift: async (connId, db) => {
       try {
@@ -145,6 +162,7 @@ export const useGit = create<GitState>((set, get) => {
       wrap('checkout', async () => {
         await gitApi.checkout(name)
         await reload()
+        void get().refreshDrift()
       }),
 
     createBranch: (name, switchTo) =>
@@ -152,6 +170,7 @@ export const useGit = create<GitState>((set, get) => {
         await gitApi.createBranch(name)
         if (switchTo) await gitApi.checkout(name)
         await reload()
+        if (switchTo) void get().refreshDrift()
       }),
 
     merge: (from) =>
@@ -162,6 +181,7 @@ export const useGit = create<GitState>((set, get) => {
           return 'conflicts'
         }
         await reload()
+        void get().refreshDrift()
         return res.status
       }),
 
@@ -170,6 +190,7 @@ export const useGit = create<GitState>((set, get) => {
         await gitApi.resolve(resolutions)
         set({ conflicts: null })
         await reload()
+        void get().refreshDrift()
       }),
 
     abortMerge: () =>

@@ -6,7 +6,7 @@ import { useGit } from '../../state/gitStore'
 import { useTabs } from '../../state/tabsStore'
 import { useUi } from '../../state/uiStore'
 import { explorerApi } from '../../api/endpoints'
-import type { ObjectStatusEntry } from '../../api/git'
+import { gitApi, type ObjectStatusEntry } from '../../api/git'
 import type { ObjectInfo, ObjectType, Profile } from '../../api/types'
 import ContextMenu, { MenuItem } from '../common/ContextMenu'
 import NewObjectDialog, { NewObjectTarget } from './NewObjectDialog'
@@ -84,6 +84,27 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
       {vcLetter(state)}
     </span>
   )
+
+  /** Re-script one object from the database into the current branch's worktree. */
+  const pullObject = async (connId: string, db: string, schema: string, name: string): Promise<void> => {
+    try {
+      const res = await gitApi.syncObject(db, schema, name)
+      if (res.skipped) {
+        alert(`Not pulled: ${res.reason ?? 'skipped'}`)
+        return
+      }
+      await useGit.getState().loadObjectStatus()
+      void useGit.getState().loadDrift(connId, db)
+    } catch (err) {
+      alert(`Pull into repo failed: ${err}`)
+    }
+  }
+
+  /** Context-menu entry to pull one object into the repo, on tracked databases only. */
+  const pullMenuItem = (connId: string, db: string, obj: ObjectInfo): MenuItem[] =>
+    isTracked(connId, db)
+      ? [{ label: 'Pull into repo', onClick: () => void pullObject(connId, db, obj.schema, obj.name) }]
+      : []
 
   const countBadge = (n: number): React.JSX.Element | null =>
     n > 0 ? (
@@ -461,6 +482,7 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
                   })
               })
             }
+            items.push(...pullMenuItem(connId, db, obj))
             setMenu({ x: e.clientX, y: e.clientY, items })
           }
         })}
@@ -533,7 +555,8 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
                         })
                       }
                     }]
-                  : [])
+                  : []),
+                ...pullMenuItem(connId, db, obj)
               ]
             })
         })}

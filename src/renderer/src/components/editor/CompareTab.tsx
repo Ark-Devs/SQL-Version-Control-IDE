@@ -22,6 +22,7 @@ const isDeployable = (o: CompareObject): boolean =>
  */
 export default function CompareTab(): React.JSX.Element {
   const manifestDbs = useGit((s) => s.info.manifest?.databases ?? [])
+  const branches = useGit((s) => s.branches)
   const profiles = useConnections((s) => s.profiles)
 
   const [ref, setRef] = useState('HEAD')
@@ -120,8 +121,14 @@ export default function CompareTab(): React.JSX.Element {
             onChange={(e) => setRef(e.target.value)}
             placeholder="HEAD"
             title="branch, tag, or commit"
+            list="compare-ref-branches"
             style={{ width: 150, fontFamily: 'var(--font-mono)' }}
           />
+          <datalist id="compare-ref-branches">
+            {branches.map((b) => (
+              <option key={b.name} value={b.name} />
+            ))}
+          </datalist>
         </label>
         <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>branch, tag, or commit</span>
 
