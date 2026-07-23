@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { DiffEditor } from '@monaco-editor/react'
-import { ArrowLeftRight, CheckCircle2, Rocket, TriangleAlert, X, XCircle } from 'lucide-react'
+import { ArrowLeftRight, CheckCircle2, FileCode2, Rocket, TriangleAlert, X, XCircle } from 'lucide-react'
 import { compareApi, type CompareObject, type CompareState } from '../../api/compare'
 import { deployApi, type DeployPlan, type DeployResult } from '../../api/deploy'
 import { useConnections } from '../../state/connectionsStore'
+import { useExplorer } from '../../state/explorerStore'
 import { useGit } from '../../state/gitStore'
+import { useTabs } from '../../state/tabsStore'
 
 /** Per-state color + label. Version-control accent (violet) frames the feature. */
 const STATE_META: Record<Exclude<CompareState, 'identical'>, { color: string; label: string }> = {
@@ -23,7 +25,16 @@ const isDeployable = (o: CompareObject): boolean =>
 export default function CompareTab(): React.JSX.Element {
   const manifestDbs = useGit((s) => s.info.manifest?.databases ?? [])
   const branches = useGit((s) => s.branches)
+  const repoOpen = useGit((s) => s.info.open)
   const profiles = useConnections((s) => s.profiles)
+  const dbLists = useExplorer((s) => s.databases)
+  const loadDatabases = useExplorer((s) => s.loadDatabases)
+
+  // source is either the repo at a ref, or a second live database (SSMS-style)
+  const [mode, setMode] = useState<'repo' | 'live'>(repoOpen ? 'repo' : 'live')
+  const [sourceConnId, setSourceConnId] = useState('')
+  const [sourceDb, setSourceDb] = useState('')
+  const [targetDb, setTargetDb] = useState('')
 
   const [ref, setRef] = useState('HEAD')
   const [connId, setConnId] = useState('')
@@ -69,7 +80,10 @@ export default function CompareTab(): React.JSX.Element {
     setBusy(true)
     setError('')
     try {
-      const res = await compareApi.run(ref.trim() || 'HEAD', connId, [...dbs])
+      const res =
+        mode === 'repo'
+          ? await compareApi.run(ref.trim() || 'HEAD', connId, [...dbs])
+          : await compareApi.live(sourceConnId, sourceDb.trim(), connId, targetDb.trim())
       const objs = res.objects ?? []
       setObjects(objs)
       setWarnings(res.warnings ?? [])
@@ -84,6 +98,32 @@ export default function CompareTab(): React.JSX.Element {
       setBusy(false)
     }
   }
+
+  /**
+   * Live mode's counterpart to Deploy: put the checked objects' SOURCE scripts
+   * into a query tab wired to the target connection+database, so the user
+   * reviews and executes the application themselves.
+   */
+  const scriptSelectedToTab = (): void => {
+    const parts = (objects ?? [])
+      .filter((o) => checked.has(o.path) && o.repoSql)
+      .map((o) => `-- ${o.schema}.${o.name} (${o.state === 'missingOnTarget' ? 'missing on target' : 'different'})\n${o.repoSql}`)
+    if (parts.length === 0) return
+    useTabs.getState().openTab({
+      title: `apply ${sourceDb} → ${targetDb}`,
+      connId,
+      database: targetDb.trim(),
+      content: parts.join('\nGO\n\n')
+    })
+  }
+
+  // SSMS-style pickers: load a connection's database list once it is chosen
+  useEffect(() => {
+    if (mode === 'live' && sourceConnId) void loadDatabases(sourceConnId)
+  }, [mode, sourceConnId, loadDatabases])
+  useEffect(() => {
+    if (mode === 'live' && connId) void loadDatabases(connId)
+  }, [mode, connId, loadDatabases])
 
   const toggle = (path: string): void =>
     setChecked((prev) => {
@@ -114,50 +154,23 @@ export default function CompareTab(): React.JSX.Element {
           <ArrowLeftRight size={14} /> Schema Compare
         </span>
 
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <span className="section-label">ref</span>
-          <input
-            value={ref}
-            onChange={(e) => setRef(e.target.value)}
-            placeholder="HEAD"
-            title="branch, tag, or commit"
-            list="compare-ref-branches"
-            style={{ width: 150, fontFamily: 'var(--font-mono)' }}
-          />
-          <datalist id="compare-ref-branches">
-            {branches.map((b) => (
-              <option key={b.name} value={b.name} />
-            ))}
-          </datalist>
-        </label>
-        <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>branch, tag, or commit</span>
-
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <span className="section-label">target</span>
-          <select value={connId} onChange={(e) => setConnId(e.target.value)}>
-            <option value="">(target connection)</option>
-            {profiles.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-          {manifestDbs.map((d) => {
-            const on = dbs.has(d)
+        {/* source mode toggle: repo-at-ref vs a second live database */}
+        <div style={{ display: 'inline-flex', gap: 4 }}>
+          {(['repo', 'live'] as const).map((m) => {
+            const on = mode === m
+            const disabled = m === 'repo' && !repoOpen
             return (
               <button
-                key={d}
-                onClick={() =>
-                  setDbs((prev) => {
-                    const next = new Set(prev)
-                    if (next.has(d)) next.delete(d)
-                    else next.add(d)
-                    return next
-                  })
-                }
+                key={m}
+                disabled={disabled}
+                onClick={() => {
+                  setMode(m)
+                  setObjects(null)
+                  setChecked(new Set())
+                  setSelectedPath(null)
+                  setError('')
+                }}
+                title={disabled ? 'Open a repository to compare against a ref' : undefined}
                 style={{
                   padding: '2px 9px',
                   fontSize: 11,
@@ -166,30 +179,163 @@ export default function CompareTab(): React.JSX.Element {
                   background: on ? 'var(--accent-2-muted)' : 'transparent',
                   color: on ? 'var(--accent-2)' : 'var(--text-dim)'
                 }}
-                title={on ? 'Included in compare' : 'Excluded from compare'}
               >
-                {d}
+                {m === 'repo' ? 'Repo ref' : 'Live database'}
               </button>
             )
           })}
         </div>
 
+        {mode === 'repo' ? (
+          <>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <span className="section-label">ref</span>
+              <input
+                value={ref}
+                onChange={(e) => setRef(e.target.value)}
+                placeholder="HEAD"
+                title="branch, tag, or commit"
+                list="compare-ref-branches"
+                style={{ width: 150, fontFamily: 'var(--font-mono)' }}
+              />
+              <datalist id="compare-ref-branches">
+                {branches.map((b) => (
+                  <option key={b.name} value={b.name} />
+                ))}
+              </datalist>
+            </label>
+            <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>branch, tag, or commit</span>
+
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <span className="section-label">target</span>
+              <select value={connId} onChange={(e) => setConnId(e.target.value)}>
+                <option value="">(target connection)</option>
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              {manifestDbs.map((d) => {
+                const on = dbs.has(d)
+                return (
+                  <button
+                    key={d}
+                    onClick={() =>
+                      setDbs((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(d)) next.delete(d)
+                        else next.add(d)
+                        return next
+                      })
+                    }
+                    style={{
+                      padding: '2px 9px',
+                      fontSize: 11,
+                      borderRadius: 'var(--radius-sm)',
+                      border: `1px solid ${on ? 'var(--accent-2)' : 'var(--border)'}`,
+                      background: on ? 'var(--accent-2-muted)' : 'transparent',
+                      color: on ? 'var(--accent-2)' : 'var(--text-dim)'
+                    }}
+                    title={on ? 'Included in compare' : 'Excluded from compare'}
+                  >
+                    {d}
+                  </button>
+                )
+              })}
+            </div>
+          </>
+        ) : (
+          <>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <span className="section-label">source</span>
+              <select value={sourceConnId} onChange={(e) => setSourceConnId(e.target.value)}>
+                <option value="">(connection)</option>
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={sourceDb}
+                onChange={(e) => setSourceDb(e.target.value)}
+                placeholder="database"
+                list="compare-source-dbs"
+                disabled={!sourceConnId}
+                style={{ width: 130, fontFamily: 'var(--font-mono)' }}
+              />
+              <datalist id="compare-source-dbs">
+                {(dbLists[sourceConnId] ?? []).map((d) => (
+                  <option key={d} value={d} />
+                ))}
+              </datalist>
+            </label>
+
+            <ArrowLeftRight size={13} color="var(--text-faint)" />
+
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <span className="section-label">target</span>
+              <select value={connId} onChange={(e) => setConnId(e.target.value)}>
+                <option value="">(connection)</option>
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={targetDb}
+                onChange={(e) => setTargetDb(e.target.value)}
+                placeholder="database"
+                list="compare-target-dbs"
+                disabled={!connId}
+                style={{ width: 130, fontFamily: 'var(--font-mono)' }}
+              />
+              <datalist id="compare-target-dbs">
+                {(dbLists[connId] ?? []).map((d) => (
+                  <option key={d} value={d} />
+                ))}
+              </datalist>
+            </label>
+          </>
+        )}
+
         <button
           className="primary"
-          disabled={!connId || dbs.size === 0 || busy}
+          disabled={
+            busy ||
+            (mode === 'repo'
+              ? !connId || dbs.size === 0
+              : !sourceConnId || !sourceDb.trim() || !connId || !targetDb.trim())
+          }
           onClick={() => void runCompare()}
         >
           {busy ? 'Comparing…' : 'Compare'}
         </button>
-        <button
-          className="primary"
-          disabled={checked.size === 0 || busy}
-          title="Deploy the checked objects to the target with CREATE OR ALTER"
-          onClick={() => setDeploying(true)}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-        >
-          <Rocket size={13} /> Deploy selected ({checked.size})
-        </button>
+        {mode === 'repo' ? (
+          <button
+            className="primary"
+            disabled={checked.size === 0 || busy}
+            title="Deploy the checked objects to the target with CREATE OR ALTER"
+            onClick={() => setDeploying(true)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <Rocket size={13} /> Deploy selected ({checked.size})
+          </button>
+        ) : (
+          <button
+            disabled={checked.size === 0 || busy}
+            title="Open a query tab against the target with the checked objects' source scripts — review, then execute"
+            onClick={scriptSelectedToTab}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <FileCode2 size={13} /> Script selected to tab ({checked.size})
+          </button>
+        )}
       </div>
 
       {error && (
@@ -211,11 +357,15 @@ export default function CompareTab(): React.JSX.Element {
         <div style={{ width: 360, borderRight: '1px solid var(--border)', overflow: 'auto', flexShrink: 0 }}>
           {objects === null ? (
             <div style={{ padding: 12, color: 'var(--text-dim)', fontSize: 12 }}>
-              Pick a target connection and databases, then Compare.
+              {mode === 'repo'
+                ? 'Pick a target connection and databases, then Compare.'
+                : 'Pick a source and target database, then Compare.'}
             </div>
           ) : drift.length === 0 ? (
             <div style={{ padding: 12, color: 'var(--text-dim)', fontSize: 12 }}>
-              No differences — {label(dbs.size)} match the repo at {ref.trim() || 'HEAD'}.
+              {mode === 'repo'
+                ? `No differences — ${label(dbs.size)} match the repo at ${ref.trim() || 'HEAD'}.`
+                : `No differences — ${sourceDb} and ${targetDb} match.`}
             </div>
           ) : (
             grouped.map(([database, rows]) => (
@@ -282,8 +432,12 @@ export default function CompareTab(): React.JSX.Element {
                   borderBottom: '1px solid var(--border)'
                 }}
               >
-                <span style={{ flex: 1, padding: '3px 10px' }}>Target (live database)</span>
-                <span style={{ flex: 1, padding: '3px 10px' }}>Repo @ {ref.trim() || 'HEAD'}</span>
+                <span style={{ flex: 1, padding: '3px 10px' }}>
+                  {mode === 'repo' ? 'Target (live database)' : `Target (${targetDb})`}
+                </span>
+                <span style={{ flex: 1, padding: '3px 10px' }}>
+                  {mode === 'repo' ? `Repo @ ${ref.trim() || 'HEAD'}` : `Source (${sourceDb})`}
+                </span>
               </div>
               <div style={{ flex: 1, minHeight: 0 }}>
                 <DiffEditor

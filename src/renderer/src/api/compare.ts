@@ -23,5 +23,13 @@ export interface CompareResult {
 export const compareApi = {
   /** Diff the repo at `ref` against the target connection's live databases. */
   run: (ref: string, targetConnId: string, databases: string[]) =>
-    post<CompareResult>('/repo/compare', { ref, targetConnId, databases })
+    post<CompareResult>('/repo/compare', { ref, targetConnId, databases }),
+
+  /**
+   * Diff two live databases directly — no repository involved. In the result,
+   * `repoSql` carries the SOURCE side and "missingOnTarget" means "present on
+   * the source only".
+   */
+  live: (sourceConnId: string, sourceDb: string, targetConnId: string, targetDb: string) =>
+    post<CompareResult>('/compare/live', { sourceConnId, sourceDb, targetConnId, targetDb })
 }

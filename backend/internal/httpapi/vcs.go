@@ -3,6 +3,7 @@ package httpapi
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -402,6 +403,42 @@ func mountVCS(r chi.Router, d *Deps) {
 			}
 			writeJSON(w, http.StatusOK, map[string]string{"content": content})
 		})
+	})
+
+	// Live schema compare: diff two live databases directly, no repository
+	// required — works in standalone mode. "missingOnTarget" in the result
+	// means "present on the source only".
+	r.Post("/api/compare/live", func(w http.ResponseWriter, req *http.Request) {
+		var body struct {
+			SourceConnID string `json:"sourceConnId"`
+			SourceDb     string `json:"sourceDb"`
+			TargetConnID string `json:"targetConnId"`
+			TargetDb     string `json:"targetDb"`
+		}
+		if err := decode(req, &body); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if body.SourceConnID == "" || body.SourceDb == "" || body.TargetConnID == "" || body.TargetDb == "" {
+			writeErr(w, http.StatusBadRequest, errors.New("sourceConnId, sourceDb, targetConnId and targetDb are required"))
+			return
+		}
+		sourcePool, err := d.Registry.Get(body.SourceConnID, body.SourceDb)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("source: %w", err))
+			return
+		}
+		targetPool, err := d.Registry.Get(body.TargetConnID, body.TargetDb)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("target: %w", err))
+			return
+		}
+		res, err := gitrepo.LiveCompare(req.Context(), sourcePool, targetPool, body.SourceDb)
+		if err != nil {
+			writeErr(w, statusFor(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, res)
 	})
 }
 

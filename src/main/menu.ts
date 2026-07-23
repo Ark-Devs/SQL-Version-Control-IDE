@@ -88,7 +88,7 @@ function buildTemplate(): MenuItemConstructorOptions[] {
     {
       label: 'Tools',
       submenu: [
-        { label: 'Schema Compare…', enabled: state.repoOpen, click: () => send('schema-compare') }
+        { label: 'Schema Compare…', click: () => send('schema-compare') }
       ]
     },
     {

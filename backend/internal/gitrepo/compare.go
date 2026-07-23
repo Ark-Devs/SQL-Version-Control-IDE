@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 
+	sqldb "database/sql"
+
 	"svcide/internal/db"
 )
 
@@ -43,6 +45,21 @@ type compareEntry struct {
 	sql string
 }
 
+// normalizeSQL reduces cosmetic noise before equality checks: CRLF/CR become
+// LF, tabs become spaces, and trailing whitespace is stripped per line and
+// overall. Case and literal content are preserved — only whitespace shape is
+// ignored, so a real edit still classifies as different.
+func normalizeSQL(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	s = strings.ReplaceAll(s, "\t", " ")
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		lines[i] = strings.TrimRight(ln, " ")
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
 // classifyCompare diffs repo objects against target objects, both keyed by the
 // repo-relative object path. It is deliberately DB-free so classification is
 // unit-testable without a live SQL Server. Results are ordered by path.
@@ -71,7 +88,7 @@ func classifyCompare(repo, target map[string]compareEntry) []CompareObject {
 		switch {
 		case inRepo && inTarget:
 			co.Database, co.Schema, co.Name, co.Type = r.obj.Database, r.obj.Schema, r.obj.Name, r.obj.Type
-			if r.sql == t.sql {
+			if normalizeSQL(r.sql) == normalizeSQL(t.sql) {
 				co.State = StateIdentical
 			} else {
 				co.State = StateDifferent
@@ -162,5 +179,49 @@ func (m *Manager) Compare(ctx context.Context, poolFor PoolFunc, ref string, dat
 
 		res.Objects = append(res.Objects, classifyCompare(repo, target)...)
 	}
+	return res, nil
+}
+
+// scriptDatabase scripts every non-encrypted object of one live database into
+// a compareEntry map keyed by ObjectPath under the given label. Encrypted
+// objects append a warning tagged with side ("source"/"target").
+func scriptDatabase(ctx context.Context, pool *sqldb.DB, label, side string, warnings *[]string) (map[string]compareEntry, error) {
+	modules, err := db.ScriptModules(ctx, pool)
+	if err != nil {
+		return nil, fmt.Errorf("script modules: %w", err)
+	}
+	tables, err := db.ScriptTables(ctx, pool)
+	if err != nil {
+		return nil, fmt.Errorf("script tables: %w", err)
+	}
+	out := map[string]compareEntry{}
+	for _, obj := range append(modules, tables...) {
+		if obj.Encrypted {
+			*warnings = append(*warnings, fmt.Sprintf("%s.%s is encrypted on the %s — skipped", obj.Schema, obj.Name, side))
+			continue
+		}
+		out[ObjectPath(label, obj.Schema, obj.Name, obj.Type)] = compareEntry{
+			obj: ManifestObject{Database: label, Schema: obj.Schema, Name: obj.Name, Type: obj.Type},
+			sql: obj.SQL,
+		}
+	}
+	return out, nil
+}
+
+// LiveCompare diffs two live databases directly — no repository involved.
+// Objects are matched by schema+name+type (both sides keyed under the source
+// database's name), so databases with different names compare cleanly.
+// In the result, "missingOnTarget" means present on the source only.
+func LiveCompare(ctx context.Context, sourcePool, targetPool *sqldb.DB, sourceDb string) (*CompareResult, error) {
+	res := &CompareResult{Objects: []CompareObject{}, Warnings: []string{}}
+	source, err := scriptDatabase(ctx, sourcePool, sourceDb, "source", &res.Warnings)
+	if err != nil {
+		return nil, fmt.Errorf("source: %w", err)
+	}
+	target, err := scriptDatabase(ctx, targetPool, sourceDb, "target", &res.Warnings)
+	if err != nil {
+		return nil, fmt.Errorf("target: %w", err)
+	}
+	res.Objects = classifyCompare(source, target)
 	return res, nil
 }
