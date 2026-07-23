@@ -2,12 +2,29 @@
 
 All notable changes to ArkSQL.
 
-## [0.2.2] — 2026-07-21
+## [0.2.2] — 2026-07-23
 
 ### Version control
 - **Repo-scoped Object Explorer**: while a repo is open, the explorer now
   shows only that repo's source connection and the databases it tracks,
   auto-expanded on open, instead of every saved connection and database.
+- **Live schema compare**: the Schema Compare tab can diff two live
+  databases directly (source connection/database vs target), no repository
+  required — with SSMS-style pickers (saved connections + database fields
+  that suggest the live list or accept typing). "Script selected to tab"
+  opens the chosen objects' source scripts against the target for
+  review-then-run.
+- **Pull into repo**: right-click any object in a tracked database to
+  re-script just that object into the current branch.
+- The Schema Compare ref field suggests existing branches.
+
+### Fixed
+- Objects in databases the repo does **not** track no longer light up with
+  false modified/new drift colors.
+- Drift recomputes automatically after switching branches, so returning to
+  main immediately shows which objects the database is ahead on.
+- Comparison equality is whitespace/line-ending normalized, so cosmetic
+  differences no longer classify objects as different.
 
 ## [0.2.1] — 2026-07-18
 
