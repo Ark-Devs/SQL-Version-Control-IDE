@@ -174,12 +174,33 @@ func mountVCS(r chi.Router, d *Deps) {
 		// Drift: compare one database against the repo without writing.
 		// Powers the green (new) / yellow (modified) explorer badges.
 		r.Get("/drift/{connId}/{db}", func(w http.ResponseWriter, req *http.Request) {
-			pool, err := d.Registry.Get(chi.URLParam(req, "connId"), chi.URLParam(req, "db"))
+			db := chi.URLParam(req, "db")
+			// Drift compares against the repo baseline, so it only means
+			// anything for databases the manifest tracks — an untracked
+			// database has no files and every object would falsely report
+			// as new/modified.
+			man, err := d.Repo.ReadManifest()
+			if err != nil {
+				writeErr(w, statusFor(err), err)
+				return
+			}
+			tracked := false
+			for _, name := range man.Databases {
+				if strings.EqualFold(name, db) {
+					tracked = true
+					break
+				}
+			}
+			if !tracked {
+				writeJSON(w, http.StatusOK, gitrepo.DriftReport{})
+				return
+			}
+			pool, err := d.Registry.Get(chi.URLParam(req, "connId"), db)
 			if err != nil {
 				writeErr(w, http.StatusBadRequest, err)
 				return
 			}
-			report, err := d.Repo.Drift(req.Context(), pool, chi.URLParam(req, "db"))
+			report, err := d.Repo.Drift(req.Context(), pool, db)
 			if err != nil {
 				writeErr(w, statusFor(err), err)
 				return

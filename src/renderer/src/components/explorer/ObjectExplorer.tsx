@@ -882,7 +882,10 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
             onExpand: () =>
               void expand(dbKey, async () => {
                 await Promise.all([explorer.loadObjects(p.id, db), explorer.loadExtras(p.id, db)])
-                if (repoOpen) void useGit.getState().loadDrift(p.id, db)
+                // drift only makes sense for databases the repo tracks —
+                // untracked ones have no baseline files and would light up
+                // entirely as false "modified"/"new"
+                if (isTracked(p.id, db)) void useGit.getState().loadDrift(p.id, db)
               }),
             onContextMenu: (e) =>
               setMenu({
@@ -897,7 +900,7 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
                     label: 'Refresh',
                     onClick: () => {
                       void explorer.refreshDatabase(p.id, db)
-                      if (repoOpen) void useGit.getState().loadDrift(p.id, db)
+                      if (isTracked(p.id, db)) void useGit.getState().loadDrift(p.id, db)
                       if (repoOpen) void useGit.getState().loadObjectStatus()
                     }
                   }
