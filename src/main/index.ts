@@ -26,6 +26,15 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
 
+  // If the renderer process dies (OOM, GPU fault…), reload instead of leaving
+  // a dead black window the user cannot recover from.
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    if (details.reason !== 'clean-exit') {
+      console.error('renderer gone:', details.reason, '— reloading')
+      mainWindow?.webContents.reload()
+    }
+  })
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }

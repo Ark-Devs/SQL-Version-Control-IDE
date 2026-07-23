@@ -6,6 +6,7 @@ import { useGit } from './state/gitStore'
 import { useSettings } from './state/settingsStore'
 import { openCompareTab, useTabs } from './state/tabsStore'
 import { useUi } from './state/uiStore'
+import ErrorBoundary from './components/common/ErrorBoundary'
 import Shell from './components/layout/Shell'
 import SearchDialog from './components/search/SearchDialog'
 import './components/editor/monacoSetup'
@@ -167,9 +168,9 @@ export default function App(): React.JSX.Element {
   }
 
   return (
-    <>
+    <ErrorBoundary>
       <Shell />
       <SearchDialog />
-    </>
+    </ErrorBoundary>
   )
 }

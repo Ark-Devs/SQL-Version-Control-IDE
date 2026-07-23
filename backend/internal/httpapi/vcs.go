@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"svcide/internal/db"
 	"svcide/internal/gitrepo"
@@ -386,7 +388,7 @@ func mountVCS(r chi.Router, d *Deps) {
 				writeErr(w, statusFor(err), err)
 				return
 			}
-			writeJSON(w, http.StatusOK, res)
+			writeJSON(w, http.StatusOK, slimCompare(res))
 		})
 
 		r.Get("/file", func(w http.ResponseWriter, req *http.Request) {
@@ -403,6 +405,19 @@ func mountVCS(r chi.Router, d *Deps) {
 			}
 			writeJSON(w, http.StatusOK, map[string]string{"content": content})
 		})
+	})
+
+	// Serve one object's SQL bodies from a cached compare result. The compare
+	// list responses are metadata-only (full SQL for every object of a large
+	// database in one payload can exhaust the renderer), so the diff viewer
+	// fetches the two sides lazily per object.
+	r.Get("/api/compare/{id}/object", func(w http.ResponseWriter, req *http.Request) {
+		repoSql, targetSql, ok := compares.sql(chi.URLParam(req, "id"), req.URL.Query().Get("path"))
+		if !ok {
+			writeErr(w, http.StatusNotFound, errors.New("compare result expired — run the compare again"))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"repoSql": repoSql, "targetSql": targetSql})
 	})
 
 	// Live schema compare: diff two live databases directly, no repository
@@ -438,8 +453,62 @@ func mountVCS(r chi.Router, d *Deps) {
 			writeErr(w, statusFor(err), err)
 			return
 		}
-		writeJSON(w, http.StatusOK, res)
+		writeJSON(w, http.StatusOK, slimCompare(res))
 	})
+}
+
+// compareCache keeps the last few full compare results in memory so the diff
+// viewer can pull individual objects' SQL after a metadata-only list response.
+type compareCache struct {
+	mu    sync.Mutex
+	order []string
+	items map[string]*gitrepo.CompareResult
+}
+
+var compares compareCache
+
+func (c *compareCache) put(res *gitrepo.CompareResult) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.items == nil {
+		c.items = map[string]*gitrepo.CompareResult{}
+	}
+	id := uuid.NewString()
+	c.items[id] = res
+	c.order = append(c.order, id)
+	for len(c.order) > 4 {
+		delete(c.items, c.order[0])
+		c.order = c.order[1:]
+	}
+	return id
+}
+
+func (c *compareCache) sql(id, path string) (repoSql, targetSql string, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	res := c.items[id]
+	if res == nil {
+		return "", "", false
+	}
+	for _, o := range res.Objects {
+		if o.Path == path {
+			return o.RepoSQL, o.TargetSQL, true
+		}
+	}
+	return "", "", false
+}
+
+// slimCompare caches the full result and returns a metadata-only copy plus the
+// cache id. Shipping every object's SQL in one payload can be tens/hundreds of
+// MB on a large database and crashes the renderer.
+func slimCompare(res *gitrepo.CompareResult) map[string]any {
+	id := compares.put(res)
+	objects := make([]gitrepo.CompareObject, len(res.Objects))
+	for i, o := range res.Objects {
+		o.RepoSQL, o.TargetSQL = "", ""
+		objects[i] = o
+	}
+	return map[string]any{"id": id, "objects": objects, "warnings": res.Warnings}
 }
 
 func repoInfo(w http.ResponseWriter, d *Deps, extra map[string]any) {

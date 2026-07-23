@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { DiffEditor } from '@monaco-editor/react'
 import { ArrowLeftRight, CheckCircle2, FileCode2, Rocket, TriangleAlert, X, XCircle } from 'lucide-react'
-import { compareApi, type CompareObject, type CompareState } from '../../api/compare'
+import { compareApi, type CompareObject, type CompareObjectSql, type CompareState } from '../../api/compare'
 import { deployApi, type DeployPlan, type DeployResult } from '../../api/deploy'
 import { useConnections } from '../../state/connectionsStore'
 import { useExplorer } from '../../state/explorerStore'
@@ -46,6 +46,10 @@ export default function CompareTab(): React.JSX.Element {
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [deploying, setDeploying] = useState(false)
+  // SQL bodies come per object from the cached result, not with the list
+  const [compareId, setCompareId] = useState('')
+  const [sqlCache, setSqlCache] = useState<Record<string, CompareObjectSql>>({})
+  const [sqlLoading, setSqlLoading] = useState(false)
 
   // Manifest databases can arrive after the tab is created; seed the selection
   // once when the list first becomes available. `seeded` starts true when the
@@ -86,6 +90,8 @@ export default function CompareTab(): React.JSX.Element {
           : await compareApi.live(sourceConnId, sourceDb.trim(), connId, targetDb.trim())
       const objs = res.objects ?? []
       setObjects(objs)
+      setCompareId(res.id)
+      setSqlCache({})
       setWarnings(res.warnings ?? [])
       const deployable = objs.filter((o) => o.state !== 'identical').filter(isDeployable)
       setChecked(new Set(deployable.map((o) => o.path)))
@@ -102,20 +108,55 @@ export default function CompareTab(): React.JSX.Element {
   /**
    * Live mode's counterpart to Deploy: put the checked objects' SOURCE scripts
    * into a query tab wired to the target connection+database, so the user
-   * reviews and executes the application themselves.
+   * reviews and executes the application themselves. SQL is fetched lazily
+   * from the cached compare result.
    */
-  const scriptSelectedToTab = (): void => {
-    const parts = (objects ?? [])
-      .filter((o) => checked.has(o.path) && o.repoSql)
-      .map((o) => `-- ${o.schema}.${o.name} (${o.state === 'missingOnTarget' ? 'missing on target' : 'different'})\n${o.repoSql}`)
-    if (parts.length === 0) return
-    useTabs.getState().openTab({
-      title: `apply ${sourceDb} → ${targetDb}`,
-      connId,
-      database: targetDb.trim(),
-      content: parts.join('\nGO\n\n')
-    })
+  const scriptSelectedToTab = async (): Promise<void> => {
+    const chosen = (objects ?? []).filter((o) => checked.has(o.path))
+    if (chosen.length === 0) return
+    setBusy(true)
+    try {
+      const parts: string[] = []
+      for (const o of chosen) {
+        const sql = sqlCache[o.path] ?? (await compareApi.objectSql(compareId, o.path))
+        if (!sql.repoSql) continue
+        parts.push(`-- ${o.schema}.${o.name} (${o.state === 'missingOnTarget' ? 'missing on target' : 'different'})\n${sql.repoSql}`)
+      }
+      if (parts.length === 0) return
+      useTabs.getState().openTab({
+        title: `apply ${sourceDb} → ${targetDb}`,
+        connId,
+        database: targetDb.trim(),
+        content: parts.join('\nGO\n\n')
+      })
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setBusy(false)
+    }
   }
+
+  // lazy-load the selected object's SQL sides for the diff viewer
+  useEffect(() => {
+    const path = selectedPath
+    if (!path || !compareId || sqlCache[path]) return
+    let cancelled = false
+    setSqlLoading(true)
+    compareApi
+      .objectSql(compareId, path)
+      .then((sql) => {
+        if (!cancelled) setSqlCache((prev) => ({ ...prev, [path]: sql }))
+      })
+      .catch((err) => {
+        if (!cancelled) setError(String(err))
+      })
+      .finally(() => {
+        if (!cancelled) setSqlLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedPath, compareId, sqlCache])
 
   // SSMS-style pickers: load a connection's database list once it is chosen
   useEffect(() => {
@@ -330,7 +371,7 @@ export default function CompareTab(): React.JSX.Element {
           <button
             disabled={checked.size === 0 || busy}
             title="Open a query tab against the target with the checked objects' source scripts — review, then execute"
-            onClick={scriptSelectedToTab}
+            onClick={() => void scriptSelectedToTab()}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
           >
             <FileCode2 size={13} /> Script selected to tab ({checked.size})
@@ -440,21 +481,27 @@ export default function CompareTab(): React.JSX.Element {
                 </span>
               </div>
               <div style={{ flex: 1, minHeight: 0 }}>
-                <DiffEditor
-                  language="sql"
-                  theme="ssms-dark"
-                  original={selected.targetSql ?? ''}
-                  modified={selected.repoSql ?? ''}
-                  options={{
-                    readOnly: true,
-                    renderSideBySide: true,
-                    fontFamily: 'Consolas, monospace',
-                    fontSize: 13,
-                    minimap: { enabled: false },
-                    automaticLayout: true,
-                    scrollBeyondLastLine: false
-                  }}
-                />
+                {sqlLoading && !sqlCache[selected.path] ? (
+                  <div style={{ display: 'grid', placeItems: 'center', height: '100%', color: 'var(--text-dim)' }}>
+                    Loading diff…
+                  </div>
+                ) : (
+                  <DiffEditor
+                    language="sql"
+                    theme="ssms-dark"
+                    original={sqlCache[selected.path]?.targetSql ?? ''}
+                    modified={sqlCache[selected.path]?.repoSql ?? ''}
+                    options={{
+                      readOnly: true,
+                      renderSideBySide: true,
+                      fontFamily: 'Consolas, monospace',
+                      fontSize: 13,
+                      minimap: { enabled: false },
+                      automaticLayout: true,
+                      scrollBeyondLastLine: false
+                    }}
+                  />
+                )}
               </div>
             </>
           ) : (
