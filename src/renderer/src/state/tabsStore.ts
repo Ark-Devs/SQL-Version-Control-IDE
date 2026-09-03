@@ -40,6 +40,8 @@ interface TabsState {
   counter: number
 
   openTab: (partial?: Partial<Omit<Tab, 'id' | 'dirty'>>) => string
+  /** Replace every tab from a saved workspace session (see sessionStore). */
+  hydrate: (tabs: Tab[], activeId: string | null, counter: number) => void
   closeTab: (id: string) => void
   setActive: (id: string) => void
   updateContent: (id: string, content: string) => void
@@ -113,6 +115,16 @@ export const useTabs = create<TabsState>((set, get) => {
       }
       set((s) => ({ tabs: [...s.tabs, tab], activeId: id, counter: n }))
       return id
+    },
+
+    hydrate: (tabs, activeId, counter) => {
+      // ids are `tab-<n>`; never hand a restored tab's id back out to a new one
+      const highest = tabs.reduce((max, t) => Math.max(max, Number(t.id.slice(4)) || 0), 0)
+      set({
+        tabs,
+        activeId: tabs.some((t) => t.id === activeId) ? activeId : (tabs.at(-1)?.id ?? null),
+        counter: Math.max(counter, highest)
+      })
     },
 
     closeTab: (id) => {

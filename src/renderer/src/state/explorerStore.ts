@@ -15,6 +15,12 @@ interface ExplorerState {
   /** "connId|db|schema|name" → keys/constraints/triggers */
   details: Record<string, TableDetail | null | undefined>
   errors: Record<string, string>
+  /** expanded tree node keys, persisted with the workspace session */
+  expanded: Set<string>
+
+  toggleNode: (key: string) => void
+  expandNode: (key: string) => void
+  setExpandedNodes: (keys: string[]) => void
 
   loadDatabases: (connId: string) => Promise<void>
   loadObjects: (connId: string, db: string) => Promise<void>
@@ -34,6 +40,19 @@ export const useExplorer = create<ExplorerState>((set, get) => ({
   indexes: {},
   details: {},
   errors: {},
+  expanded: new Set(),
+
+  toggleNode: (key) =>
+    set((s) => {
+      const expanded = new Set(s.expanded)
+      if (!expanded.delete(key)) expanded.add(key)
+      return { expanded }
+    }),
+
+  expandNode: (key) =>
+    set((s) => (s.expanded.has(key) ? s : { expanded: new Set(s.expanded).add(key) })),
+
+  setExpandedNodes: (keys) => set({ expanded: new Set(keys) }),
 
   loadDatabases: async (connId) => {
     if (get().databases[connId] !== undefined) return
@@ -143,7 +162,10 @@ export const useExplorer = create<ExplorerState>((set, get) => ({
         columns: scrub(s.columns),
         indexes: scrub(s.indexes),
         details: scrub(s.details),
-        errors: scrub(s.errors)
+        errors: scrub(s.errors),
+        expanded: new Set(
+          [...s.expanded].filter((k) => k !== `conn|${connId}` && !k.startsWith(connId + '|'))
+        )
       }
     })
   }

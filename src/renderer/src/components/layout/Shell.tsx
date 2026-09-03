@@ -25,9 +25,9 @@ export default function Shell(): React.JSX.Element {
     open: false,
     editing: null
   })
-  const [explorerWidth, setExplorerWidth] = useState(300)
-  const [resultsHeight, setResultsHeight] = useState(260)
-  const [sidebarTab, setSidebarTab] = useState<'explorer' | 'git'>('explorer')
+  // Pane sizes and the sidebar tab live in uiStore so they are restored with
+  // the rest of the workspace session.
+  const { explorerWidth, resultsHeight, sidebarTab } = useUi((s) => s.layout)
   const [showSettings, setShowSettings] = useState(false)
 
   const dragging = useRef<'explorer' | 'results' | null>(null)
@@ -45,12 +45,12 @@ export default function Shell(): React.JSX.Element {
         setShowSettings(true)
         break
       case 'view-explorer':
-        setSidebarTab('explorer')
+        useUi.getState().setLayout({ sidebarTab: 'explorer' })
         break
       case 'view-git':
       case 'git-commit':
       case 'git-history':
-        setSidebarTab('git')
+        useUi.getState().setLayout({ sidebarTab: 'git' })
         break
       default:
         break
@@ -59,10 +59,13 @@ export default function Shell(): React.JSX.Element {
   }, [menuRequest])
 
   const onMouseMove = useCallback((e: MouseEvent) => {
+    const setLayout = useUi.getState().setLayout
     if (dragging.current === 'explorer') {
-      setExplorerWidth(Math.max(180, Math.min(600, e.clientX)))
+      setLayout({ explorerWidth: Math.max(180, Math.min(600, e.clientX)) })
     } else if (dragging.current === 'results') {
-      setResultsHeight(Math.max(100, Math.min(window.innerHeight - 220, window.innerHeight - e.clientY - 24)))
+      setLayout({
+        resultsHeight: Math.max(100, Math.min(window.innerHeight - 220, window.innerHeight - e.clientY - 24))
+      })
     }
   }, [])
 
@@ -97,7 +100,7 @@ export default function Shell(): React.JSX.Element {
             {(['explorer', 'git'] as const).map((t) => (
               <div
                 key={t}
-                onClick={() => setSidebarTab(t)}
+                onClick={() => useUi.getState().setLayout({ sidebarTab: t })}
                 style={{
                   flex: 1,
                   textAlign: 'center',

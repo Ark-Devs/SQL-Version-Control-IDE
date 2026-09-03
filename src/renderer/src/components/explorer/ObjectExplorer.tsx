@@ -37,7 +37,7 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
   const objectStatus = useGit((s) => s.objectStatus)
   const repoConnId = useGit((s) => s.info.manifest?.sourceConnId)
   const repoDatabases = useGit((s) => s.info.databases)
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const expanded = explorer.expanded
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [loadErr, setLoadErr] = useState<Record<string, string>>({})
   const [filter, setFilter] = useState('')
@@ -50,8 +50,7 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
   // databases the repo tracks, instead of every saved connection.
   useEffect(() => {
     if (!repoOpen || !repoConnId) return
-    const connKey = `conn|${repoConnId}`
-    setExpanded((prev) => (prev.has(connKey) ? prev : new Set(prev).add(connKey)))
+    explorer.expandNode(`conn|${repoConnId}`)
     void explorer.loadDatabases(repoConnId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repoOpen, repoConnId])
@@ -135,14 +134,7 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
     return changed + ghostsFor(db, type).length
   }
 
-  const toggle = (key: string): void => {
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }
+  const toggle = (key: string): void => explorer.toggleNode(key)
 
   const expand = async (key: string, loader?: () => Promise<void>): Promise<void> => {
     if (!expanded.has(key) && loader) {

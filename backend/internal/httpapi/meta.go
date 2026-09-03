@@ -1,12 +1,20 @@
 package httpapi
 
 import (
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
 	"svcide/internal/settings"
 )
+
+// maxSessionBytes caps the saved workspace session. Generous — it holds the
+// full text of every open query — but bounded so a runaway renderer cannot
+// write an unbounded file.
+const maxSessionBytes = 32 << 20
 
 func mountMeta(r chi.Router, d *Deps) {
 	r.Get("/api/settings", func(w http.ResponseWriter, _ *http.Request) {
@@ -24,6 +32,33 @@ func mountMeta(r chi.Router, d *Deps) {
 			return
 		}
 		writeJSON(w, http.StatusOK, s)
+	})
+
+	// Workspace session: opaque renderer state (open tabs and their SQL, layout,
+	// expanded explorer nodes, last repo) round-tripped verbatim.
+	r.Get("/api/session", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, d.Session.Get())
+	})
+
+	r.Put("/api/session", func(w http.ResponseWriter, req *http.Request) {
+		raw, err := io.ReadAll(io.LimitReader(req.Body, maxSessionBytes+1))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if len(raw) > maxSessionBytes {
+			writeErr(w, http.StatusRequestEntityTooLarge, errors.New("session exceeds 32 MB"))
+			return
+		}
+		if !json.Valid(raw) {
+			writeErr(w, http.StatusBadRequest, errors.New("session body is not valid JSON"))
+			return
+		}
+		if err := d.Session.Set(raw); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"saved": true})
 	})
 
 	r.Get("/api/meta/{connId}/{db}/autocomplete", func(w http.ResponseWriter, req *http.Request) {

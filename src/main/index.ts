@@ -1,10 +1,47 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, type Event } from 'electron'
 import { join } from 'path'
 import { startBackend, stopBackend, getBackendInfo } from './backend'
 import { setupMenu } from './menu'
 import { startUpdateChecker } from './updater'
 
 let mainWindow: BrowserWindow | null = null
+
+/** How long to wait for the renderer to write its workspace before closing. */
+const SESSION_FLUSH_TIMEOUT_MS = 2000
+
+/** Ask the renderer to save its workspace session while it is still alive. */
+function flushSession(): Promise<void> {
+  const win = mainWindow
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    let timer: NodeJS.Timeout
+    const done = (): void => {
+      clearTimeout(timer)
+      ipcMain.removeListener('session:flushed', done)
+      resolve()
+    }
+    ipcMain.once('session:flushed', done)
+    timer = setTimeout(done, SESSION_FLUSH_TIMEOUT_MS)
+    win.webContents.send('session:flush')
+  })
+}
+
+let shuttingDown = false
+
+/**
+ * Both the window's X and an app quit funnel through here: save the workspace
+ * while the renderer is alive, then stop the backend, then quit for real.
+ */
+function beginShutdown(e: Event): void {
+  if (shuttingDown) return
+  e.preventDefault()
+  shuttingDown = true
+  void flushSession()
+    .catch(() => undefined)
+    .then(() => stopBackend())
+    .catch(() => undefined)
+    .finally(() => app.quit())
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -25,6 +62,7 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
+  mainWindow.on('close', beginShutdown)
 
   // If the renderer process dies (OOM, GPU fault…), reload instead of leaving
   // a dead black window the user cannot recover from.
@@ -90,10 +128,4 @@ app.on('window-all-closed', () => {
   app.quit()
 })
 
-let quitting = false
-app.on('before-quit', (e) => {
-  if (quitting) return
-  e.preventDefault()
-  quitting = true
-  void stopBackend().finally(() => app.quit())
-})
+app.on('before-quit', beginShutdown)

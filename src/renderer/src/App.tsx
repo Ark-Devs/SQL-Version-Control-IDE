@@ -3,6 +3,7 @@ import { get, initApi } from './api/client'
 import { gitApi } from './api/git'
 import { useConnections } from './state/connectionsStore'
 import { useGit } from './state/gitStore'
+import { flushSession, restoreSession, startSessionPersistence } from './state/sessionStore'
 import { useSettings } from './state/settingsStore'
 import { openCompareTab, useTabs } from './state/tabsStore'
 import { useUi } from './state/uiStore'
@@ -48,12 +49,24 @@ export default function App(): React.JSX.Element {
       .then(async () => {
         await useConnections.getState().load()
         await useSettings.getState().load().catch(() => undefined)
+        // restore first, then start persisting — an empty startup state must
+        // never overwrite the saved workspace
+        await restoreSession()
+        startSessionPersistence()
         setBackend('connected')
       })
       .catch((err) => {
         setBackend('error')
         setBackendError(String(err))
       })
+  }, [])
+
+  // The main process asks for one last workspace save before the window closes,
+  // and waits for the ack — so a close never loses the final keystrokes.
+  useEffect(() => {
+    window.svcide.onFlushSession(() => {
+      void flushSession().finally(() => window.svcide.sessionFlushed())
+    })
   }, [])
 
   // Subscribe once to commands from the native application menu (src/main/menu.ts).

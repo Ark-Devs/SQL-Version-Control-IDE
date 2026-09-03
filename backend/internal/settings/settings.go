@@ -23,17 +23,27 @@ type Store struct {
 	s    Settings
 }
 
-func NewStore() (*Store, error) {
+// appDataDir returns %APPDATA%\SqlVcIde (created if missing), the per-user
+// directory holding preferences and the saved workspace session.
+func appDataDir() (string, error) {
 	appData := os.Getenv("APPDATA")
 	if appData == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 		appData = home
 	}
 	dir := filepath.Join(appData, "SqlVcIde")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func NewStore() (*Store, error) {
+	dir, err := appDataDir()
+	if err != nil {
 		return nil, err
 	}
 	st := &Store{path: filepath.Join(dir, "settings.json")}

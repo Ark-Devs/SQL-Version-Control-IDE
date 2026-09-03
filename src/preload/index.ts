@@ -33,6 +33,14 @@ const api = {
   onMenuCommand: (cb: (command: string) => void): void => {
     ipcRenderer.on('menu:command', (_e, command: string) => cb(command))
   },
+  /** Main asks for a final workspace save before the window closes. */
+  onFlushSession: (cb: () => void): void => {
+    ipcRenderer.on('session:flush', () => cb())
+  },
+  /** Tell main the workspace has been saved and it may proceed with the close. */
+  sessionFlushed: (): void => {
+    ipcRenderer.send('session:flushed')
+  },
   /** Push current app state to main so it can enable/disable menu items. */
   setMenuState: (state: MenuState): void => {
     ipcRenderer.send('menu:state', state)

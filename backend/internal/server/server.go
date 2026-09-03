@@ -29,6 +29,10 @@ func New(token string, shutdownCh chan struct{}) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("init settings store: %w", err)
 	}
+	sessionStore, err := settings.NewSessionStore()
+	if err != nil {
+		return nil, fmt.Errorf("init session store: %w", err)
+	}
 	repo := gitrepo.NewManager()
 	deps := &httpapi.Deps{
 		Store:    store,
@@ -38,6 +42,7 @@ func New(token string, shutdownCh chan struct{}) (http.Handler, error) {
 		Planner:  deploy.NewPlanner(repo),
 		AcCache:  db.NewAcCache(),
 		Settings: settingsStore,
+		Session:  sessionStore,
 	}
 
 	r := chi.NewRouter()

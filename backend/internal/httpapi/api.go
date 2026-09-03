@@ -22,6 +22,7 @@ type Deps struct {
 	Planner  *deploy.Planner
 	AcCache  *db.AcCache
 	Settings *settings.Store
+	Session  *settings.SessionStore
 }
 
 // Mount attaches all API routes under /api.

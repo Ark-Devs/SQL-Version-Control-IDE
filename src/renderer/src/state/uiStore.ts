@@ -6,6 +6,13 @@ export interface ChangelogRequest {
   resolve: (desc: string | null) => void
 }
 
+/** Sidebar/results geometry, persisted with the workspace session. */
+export interface Layout {
+  explorerWidth: number
+  resultsHeight: number
+  sidebarTab: 'explorer' | 'git'
+}
+
 export interface SearchScope {
   connId?: string
   database?: string
@@ -31,6 +38,9 @@ interface UiState {
    */
   menuRequest: string | null
   setMenuRequest: (request: string | null) => void
+
+  layout: Layout
+  setLayout: (patch: Partial<Layout>) => void
 }
 
 export const useUi = create<UiState>((set, get) => ({
@@ -51,5 +61,8 @@ export const useUi = create<UiState>((set, get) => ({
   closeSearch: () => set({ searchScope: null }),
 
   menuRequest: null,
-  setMenuRequest: (request) => set({ menuRequest: request })
+  setMenuRequest: (request) => set({ menuRequest: request }),
+
+  layout: { explorerWidth: 300, resultsHeight: 260, sidebarTab: 'explorer' },
+  setLayout: (patch) => set((s) => ({ layout: { ...s.layout, ...patch } }))
 }))
