@@ -2,6 +2,15 @@
 
 All notable changes to ArkSQL.
 
+## [0.2.3] — 2026-09-03
+
+### Added
+- **Workspace session persistence**: open tabs (with their SQL and dirty
+  state), the active tab, sidebar/results pane sizes, the Explorer/Git
+  sidebar selection, expanded Object Explorer nodes, and the last-opened
+  repository are now saved on every change and restored on the next launch,
+  so closing and reopening ArkSQL brings back exactly what was open.
+
 ## [0.2.2] — 2026-07-23
 
 ### Version control
