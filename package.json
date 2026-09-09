@@ -1,6 +1,6 @@
 {
   "name": "arksql",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "ArkSQL — SQL Server IDE with Git-based version control (Version-Controlled SQL)",
   "main": "./out/main/index.js",
   "author": "21c Care",
