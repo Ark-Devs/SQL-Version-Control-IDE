@@ -24,10 +24,15 @@ const empty: ProfileDraft = {
 }
 
 export default function ConnectionDialog({ editing, onClose }: Props): React.JSX.Element {
+  const profiles = useConnections((s) => s.profiles)
   const [draft, setDraft] = useState<ProfileDraft>(empty)
   const [testResult, setTestResult] = useState<TestResult | null>(null)
   const [busy, setBusy] = useState<'test' | 'save' | null>(null)
   const [error, setError] = useState('')
+
+  // Servers from previously saved connections, for the datalist below — no
+  // passwords involved, `server` is already stored in plain connections.json.
+  const knownServers = [...new Set(profiles.map((p) => p.server).filter(Boolean))].sort()
 
   useEffect(() => {
     setDraft(editing ? { ...editing, password: '' } : empty)
@@ -112,11 +117,19 @@ export default function ConnectionDialog({ editing, onClose }: Props): React.JSX
       )}
       {field(
         'Server',
-        <input
-          value={draft.server}
-          onChange={(e) => patch({ server: e.target.value })}
-          placeholder={String.raw`host, host,1433 or host\INSTANCE`}
-        />
+        <>
+          <input
+            value={draft.server}
+            onChange={(e) => patch({ server: e.target.value })}
+            placeholder={String.raw`host, host,1433 or host\INSTANCE`}
+            list="known-servers"
+          />
+          <datalist id="known-servers">
+            {knownServers.map((s) => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
+        </>
       )}
       {field(
         'Authentication',
