@@ -33,6 +33,10 @@ func New(token string, shutdownCh chan struct{}) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("init session store: %w", err)
 	}
+	bindingStore, err := settings.NewBindingStore()
+	if err != nil {
+		return nil, fmt.Errorf("init repo binding store: %w", err)
+	}
 	repo := gitrepo.NewManager()
 	deps := &httpapi.Deps{
 		Store:    store,
@@ -43,6 +47,7 @@ func New(token string, shutdownCh chan struct{}) (http.Handler, error) {
 		AcCache:  db.NewAcCache(),
 		Settings: settingsStore,
 		Session:  sessionStore,
+		Bindings: bindingStore,
 	}
 
 	r := chi.NewRouter()

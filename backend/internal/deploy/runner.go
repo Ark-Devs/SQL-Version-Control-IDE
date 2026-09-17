@@ -15,13 +15,14 @@ import (
 // StepResult is the outcome of one object deployment.
 type StepResult struct {
 	Path     string `json:"path"`
+	Alias    string `json:"alias"`
 	Database string `json:"database"`
 	Object   string `json:"object"`
 	OK       bool   `json:"ok"`
 	Error    string `json:"error,omitempty"`
 }
 
-// Result is the outcome of executing a plan. Each database group runs in its
+// Result is the outcome of executing a plan. Each source group runs in its
 // own transaction: a failing group rolls back without affecting the others.
 type Result struct {
 	Committed bool         `json:"committed"` // every group committed
@@ -30,29 +31,34 @@ type Result struct {
 	ElapsedMs int64        `json:"elapsedMs"`
 }
 
-// PoolFunc resolves a database name to a pool on the target connection.
-type PoolFunc func(database string) (*sql.DB, error)
+// PoolFunc resolves a source alias and its database name to a pool. The alias
+// selects the connection (sources may sit on different servers); the database
+// name selects the catalog on it.
+type PoolFunc func(alias, database string) (*sql.DB, error)
 
-// Execute runs a plan. Steps are grouped by database; each group executes on
-// a dedicated connection inside one transaction with a single retry pass for
+// Execute runs a plan. Steps are grouped by source alias — not by database
+// name, since two aliases may be the same database on different servers and
+// cannot share a connection, let alone a transaction. Each group executes on a
+// dedicated connection inside one transaction with a single retry pass for
 // dependency-ordering failures.
 func Execute(ctx context.Context, poolFor PoolFunc, plan *Plan) (*Result, error) {
 	start := time.Now()
 	res := &Result{Committed: true}
 
-	// group steps by database, preserving plan order
+	// group steps by alias, preserving plan order
 	groups := map[string][]Step{}
-	var dbOrder []string
+	var aliasOrder []string
 	for _, s := range plan.Steps {
-		if _, ok := groups[s.Database]; !ok {
-			dbOrder = append(dbOrder, s.Database)
+		if _, ok := groups[s.Alias]; !ok {
+			aliasOrder = append(aliasOrder, s.Alias)
 		}
-		groups[s.Database] = append(groups[s.Database], s)
+		groups[s.Alias] = append(groups[s.Alias], s)
 	}
 
 	var failedGroups []string
-	for _, database := range dbOrder {
-		stepResults, err := executeGroup(ctx, poolFor, database, groups[database])
+	for _, alias := range aliasOrder {
+		steps := groups[alias]
+		stepResults, err := executeGroup(ctx, poolFor, alias, steps[0].Database, steps)
 		if err != nil {
 			return nil, err
 		}
@@ -60,13 +66,13 @@ func Execute(ctx context.Context, poolFor PoolFunc, plan *Plan) (*Result, error)
 		for _, sr := range stepResults {
 			if !sr.OK {
 				res.Committed = false
-				failedGroups = append(failedGroups, database)
+				failedGroups = append(failedGroups, alias)
 				break
 			}
 		}
 	}
 	if len(failedGroups) > 0 {
-		res.Error = fmt.Sprintf("rolled back: %v — other databases were committed", failedGroups)
+		res.Error = fmt.Sprintf("rolled back: %v — other sources were committed", failedGroups)
 	}
 	res.ElapsedMs = time.Since(start).Milliseconds()
 
@@ -74,10 +80,10 @@ func Execute(ctx context.Context, poolFor PoolFunc, plan *Plan) (*Result, error)
 	return res, nil
 }
 
-func executeGroup(ctx context.Context, poolFor PoolFunc, database string, steps []Step) ([]StepResult, error) {
-	pool, err := poolFor(database)
+func executeGroup(ctx context.Context, poolFor PoolFunc, alias, database string, steps []Step) ([]StepResult, error) {
+	pool, err := poolFor(alias, database)
 	if err != nil {
-		return nil, fmt.Errorf("connect to %s: %w", database, err)
+		return nil, fmt.Errorf("connect to %s: %w", alias, err)
 	}
 	conn, err := pool.Conn(ctx)
 	if err != nil {
@@ -86,7 +92,7 @@ func executeGroup(ctx context.Context, poolFor PoolFunc, database string, steps 
 	defer conn.Close()
 
 	if _, err := conn.ExecContext(ctx, "SET XACT_ABORT OFF; BEGIN TRANSACTION"); err != nil {
-		return nil, fmt.Errorf("begin transaction on %s: %w", database, err)
+		return nil, fmt.Errorf("begin transaction on %s: %w", alias, err)
 	}
 	rollback := func() {
 		_, _ = conn.ExecContext(context.Background(), "IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION")
@@ -96,11 +102,11 @@ func executeGroup(ctx context.Context, poolFor PoolFunc, database string, steps 
 	runStep := func(s Step, idx int) bool {
 		for _, batch := range dbpkg.SplitBatches(s.SQL) {
 			if _, err := conn.ExecContext(ctx, batch); err != nil {
-				results[idx] = StepResult{Path: s.Path, Database: database, Object: s.Schema + "." + s.Name, OK: false, Error: err.Error()}
+				results[idx] = StepResult{Path: s.Path, Alias: alias, Database: database, Object: s.Schema + "." + s.Name, OK: false, Error: err.Error()}
 				return false
 			}
 		}
-		results[idx] = StepResult{Path: s.Path, Database: database, Object: s.Schema + "." + s.Name, OK: true}
+		results[idx] = StepResult{Path: s.Path, Alias: alias, Database: database, Object: s.Schema + "." + s.Name, OK: true}
 		return true
 	}
 
@@ -130,7 +136,7 @@ func executeGroup(ctx context.Context, poolFor PoolFunc, database string, steps 
 		rollback()
 	} else if _, err := conn.ExecContext(ctx, "COMMIT TRANSACTION"); err != nil {
 		rollback()
-		return nil, fmt.Errorf("commit on %s: %w", database, err)
+		return nil, fmt.Errorf("commit on %s: %w", alias, err)
 	}
 	return results, nil
 }

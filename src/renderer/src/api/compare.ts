@@ -4,6 +4,8 @@ import { get, post } from './client'
 export type CompareState = 'missingOnTarget' | 'different' | 'onlyOnTarget' | 'identical'
 
 export interface CompareObject {
+  /** repo-side source identity; disambiguates when two sources share a database name */
+  alias: string
   database: string
   schema: string
   name: string
@@ -28,9 +30,17 @@ export interface CompareObjectSql {
 }
 
 export const compareApi = {
-  /** Diff the repo at `ref` against the target connection's live databases. */
-  run: (ref: string, targetConnId: string, databases: string[]) =>
-    post<CompareResult>('/repo/compare', { ref, targetConnId, databases }),
+  /** Diff the repo at `ref` against the target connection's live databases.
+   *  `aliases` selects which tracked sources to compare (each is scripted from
+   *  the same database name on `targetConnId` — compare answers "what would
+   *  deploying here change?"). */
+  run: (ref: string, targetConnId: string, aliases: string[]) =>
+    post<CompareResult>('/repo/compare', { ref, targetConnId, aliases }),
+
+  /** Diff the repo at `ref` against each source's OWN bound database, instead
+   *  of one explicit target — "what would checking out this branch change?". */
+  runAgainstSources: (ref: string, aliases: string[] = []) =>
+    post<CompareResult>('/repo/compare', { ref, aliases }),
 
   /**
    * Diff two live databases directly — no repository involved. In the result,

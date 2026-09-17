@@ -15,19 +15,25 @@ func mountDeploy(r chi.Router, d *Deps) {
 	r.Route("/api/deploy", func(r chi.Router) {
 		r.Post("/plan", func(w http.ResponseWriter, req *http.Request) {
 			var body struct {
-				Ref          string   `json:"ref"`
-				Paths        []string `json:"paths"`
-				TargetConnID string   `json:"targetConnId"`
+				Ref          string            `json:"ref"`
+				Paths        []string          `json:"paths"`
+				TargetConnID string            `json:"targetConnId"`
+				Targets      map[string]string `json:"targets"` // alias → connection profile ID
 			}
 			if err := decode(req, &body); err != nil {
 				writeErr(w, http.StatusBadRequest, err)
 				return
 			}
-			if body.Ref == "" || body.TargetConnID == "" {
-				writeErr(w, http.StatusBadRequest, errors.New("ref and targetConnId are required"))
+			if body.Ref == "" {
+				writeErr(w, http.StatusBadRequest, errors.New("ref is required"))
 				return
 			}
-			plan, err := d.Planner.BuildPlan(body.Ref, body.Paths, body.TargetConnID)
+			// one target connection for the whole plan, per-source targets, or both
+			if body.TargetConnID == "" && len(body.Targets) == 0 {
+				writeErr(w, http.StatusBadRequest, errors.New("targetConnId or targets is required"))
+				return
+			}
+			plan, err := d.Planner.BuildPlan(body.Ref, body.Paths, body.TargetConnID, body.Targets)
 			if err != nil {
 				writeErr(w, statusFor(err), err)
 				return
@@ -41,8 +47,19 @@ func mountDeploy(r chi.Router, d *Deps) {
 				writeErr(w, http.StatusNotFound, fmt.Errorf("plan not found or expired"))
 				return
 			}
-			poolFor := func(database string) (*sql.DB, error) {
-				return d.Registry.Get(plan.TargetConnID, database)
+			// The alias picks the connection (sources may live on different
+			// servers); the database name picks the catalog on it. Falling back
+			// to TargetConnID keeps "deploy this branch to staging" working,
+			// where every source lands on one connection.
+			poolFor := func(alias, database string) (*sql.DB, error) {
+				connID := plan.Targets[alias]
+				if connID == "" {
+					connID = plan.TargetConnID
+				}
+				if connID == "" {
+					return nil, fmt.Errorf("no connection bound to source %q", alias)
+				}
+				return d.Registry.Get(connID, database)
 			}
 			res, err := deploy.Execute(req.Context(), poolFor, plan)
 			if err != nil {

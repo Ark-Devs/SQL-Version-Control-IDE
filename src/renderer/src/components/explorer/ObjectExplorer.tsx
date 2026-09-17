@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ChevronRight, Plus, Search, X } from 'lucide-react'
 import { useConnections } from '../../state/connectionsStore'
 import { useExplorer } from '../../state/explorerStore'
@@ -35,8 +35,8 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
   const drift = useGit((s) => s.drift)
   const repoOpen = useGit((s) => s.info.open)
   const objectStatus = useGit((s) => s.objectStatus)
-  const repoConnId = useGit((s) => s.info.manifest?.sourceConnId)
-  const repoDatabases = useGit((s) => s.info.databases)
+  const repoSources = useGit((s) => s.info.manifest?.sources)
+  const repoBindings = useGit((s) => s.info.bindings)
   const expanded = explorer.expanded
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [loadErr, setLoadErr] = useState<Record<string, string>>({})
@@ -46,22 +46,36 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
   const f = filter.trim().toLowerCase()
 
   // ---------- repo-scoped browsing ----------
-  // While a repo is open, the explorer shows only its connection and the
-  // databases the repo tracks, instead of every saved connection.
-  useEffect(() => {
-    if (!repoOpen || !repoConnId) return
-    explorer.expandNode(`conn|${repoConnId}`)
-    void explorer.loadDatabases(repoConnId)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [repoOpen, repoConnId])
+  // While a repo is open the explorer shows only the connections it tracks —
+  // which may be several, since a repo can span servers.
+  const boundConnIds = useMemo(
+    () => new Set(Object.values(repoBindings ?? {})),
+    [repoBindings]
+  )
 
-  const visibleProfiles = repoOpen && repoConnId ? profiles.filter((p) => p.id === repoConnId) : profiles
+  useEffect(() => {
+    if (!repoOpen) return
+    for (const connId of boundConnIds) {
+      explorer.expandNode(`conn|${connId}`)
+      void explorer.loadDatabases(connId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repoOpen, boundConnIds])
+
+  const visibleProfiles =
+    repoOpen && boundConnIds.size > 0 ? profiles.filter((p) => boundConnIds.has(p.id)) : profiles
 
   // ---------- git-status coloring (VS Code style M/A/D) ----------
   // Only applies to databases the open repo actually tracks; every other
-  // connection/database renders exactly as before.
-  const isTracked = (connId: string, db: string): boolean =>
-    !!repoOpen && repoConnId === connId && !!repoDatabases?.includes(db)
+  // connection/database renders exactly as before. A database name alone never
+  // identifies a source — two servers can both host "Hospital" — so the local
+  // binding resolves the (connection, database) pair to its repo-side alias.
+  const aliasFor = (connId: string, db: string): string | undefined => {
+    if (!repoOpen) return undefined
+    return repoSources?.find(
+      (src) => src.database.toLowerCase() === db.toLowerCase() && repoBindings?.[src.alias] === connId
+    )?.alias
+  }
 
   const vcColor = (state: ObjectStatusEntry['state']): string =>
     state === 'added' ? 'var(--success)' : state === 'modified' ? 'var(--warning)' : 'var(--error)'
@@ -87,7 +101,7 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
   /** Re-script one object from the database into the current branch's worktree. */
   const pullObject = async (connId: string, db: string, schema: string, name: string): Promise<void> => {
     try {
-      const res = await gitApi.syncObject(db, schema, name)
+      const res = await gitApi.syncObject(connId, db, schema, name)
       if (res.skipped) {
         alert(`Not pulled: ${res.reason ?? 'skipped'}`)
         return
@@ -101,7 +115,7 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
 
   /** Context-menu entry to pull one object into the repo, on tracked databases only. */
   const pullMenuItem = (connId: string, db: string, obj: ObjectInfo): MenuItem[] =>
-    isTracked(connId, db)
+    aliasFor(connId, db)
       ? [{ label: 'Pull into repo', onClick: () => void pullObject(connId, db, obj.schema, obj.name) }]
       : []
 
@@ -112,15 +126,15 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
       </span>
     ) : null
 
-  /** Objects git reports as deleted for one database + object type — rendered
+  /** Objects git reports as deleted for one source + object type — rendered
    *  as ghost rows in their proper folder even though the live DB no longer
-   *  has them. */
-  const ghostsFor = (db: string, type: ObjectType): { schema: string; name: string; path: string }[] => {
+   *  has them. Keyed by alias, not database name: two sources can share one. */
+  const ghostsFor = (alias: string, type: ObjectType): { schema: string; name: string; path: string }[] => {
     const out: { schema: string; name: string; path: string }[] = []
     for (const [key, entry] of Object.entries(objectStatus)) {
       if (entry.state !== 'deleted' || entry.type !== type) continue
-      const [database, schema, name] = key.split('|')
-      if (database !== db) continue
+      const [entryAlias, schema, name] = key.split('|')
+      if (entryAlias !== alias) continue
       out.push({ schema, name, path: entry.path })
     }
     return out
@@ -128,10 +142,11 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
 
   /** Count of added/modified/deleted objects of one type in a tracked database. */
   const changedCountFor = (connId: string, db: string, type: ObjectType): number => {
-    if (!isTracked(connId, db)) return 0
+    const alias = aliasFor(connId, db)
+    if (!alias) return 0
     const objs = explorer.objects[`${connId}|${db}`] ?? []
-    const changed = objs.filter((o) => o.type === type && objectStatus[`${db}|${o.schema}|${o.name}`]).length
-    return changed + ghostsFor(db, type).length
+    const changed = objs.filter((o) => o.type === type && objectStatus[`${alias}|${o.schema}|${o.name}`]).length
+    return changed + ghostsFor(alias, type).length
   }
 
   const toggle = (key: string): void => explorer.toggleNode(key)
@@ -264,7 +279,8 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
     const isTable = obj.type === 'table'
     const status = (drift[`${connId}|${db}`] ?? {})[`${obj.schema}.${obj.name}`]
 
-    const vc = isTracked(connId, db) ? objectStatus[`${db}|${obj.schema}|${obj.name}`] : undefined
+    const alias = aliasFor(connId, db)
+    const vc = alias ? objectStatus[`${alias}|${obj.schema}|${obj.name}`] : undefined
 
     const label = vc ? (
       <span
@@ -490,7 +506,8 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
     const extras = explorer.extras[`${connId}|${db}`]
     const params = extras?.params?.[`${obj.schema}.${obj.name}`] ?? []
 
-    const vc = isTracked(connId, db) ? objectStatus[`${db}|${obj.schema}|${obj.name}`] : undefined
+    const alias = aliasFor(connId, db)
+    const vc = alias ? objectStatus[`${alias}|${obj.schema}|${obj.name}`] : undefined
 
     const label = vc ? (
       <span
@@ -580,12 +597,12 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
     let items = objs.filter((o) => o.type === type)
     if (f) items = items.filter((o) => `${o.schema}.${o.name}`.toLowerCase().includes(f))
 
-    const tracked = isTracked(connId, db)
-    let ghosts = tracked ? ghostsFor(db, type) : []
+    const alias = aliasFor(connId, db)
+    let ghosts = alias ? ghostsFor(alias, type) : []
     if (f) ghosts = ghosts.filter((g) => `${g.schema}.${g.name}`.toLowerCase().includes(f))
 
     if (f && items.length === 0 && ghosts.length === 0) return null
-    const changedCount = tracked ? changedCountFor(connId, db, type) : 0
+    const changedCount = alias ? changedCountFor(connId, db, type) : 0
 
     const searchItem: MenuItem = { label: 'Search here…', onClick: () => useUi.getState().openSearch({ connId, database: db }) }
     const menuItems: MenuItem[] = extraMenu
@@ -875,7 +892,7 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
       }
     }
 
-    const dbChanged = isTracked(p.id, db)
+    const dbChanged = aliasFor(p.id, db)
       ? (['table', 'view', 'proc', 'tvf', 'scalar'] as ObjectType[]).reduce(
           (sum, t) => sum + changedCountFor(p.id, db, t),
           0
@@ -900,7 +917,7 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
                 // drift only makes sense for databases the repo tracks —
                 // untracked ones have no baseline files and would light up
                 // entirely as false "modified"/"new"
-                if (isTracked(p.id, db)) void useGit.getState().loadDrift(p.id, db)
+                if (aliasFor(p.id, db)) void useGit.getState().loadDrift(p.id, db)
               }),
             onContextMenu: (e) =>
               setMenu({
@@ -915,7 +932,7 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
                     label: 'Refresh',
                     onClick: () => {
                       void explorer.refreshDatabase(p.id, db)
-                      if (isTracked(p.id, db)) void useGit.getState().loadDrift(p.id, db)
+                      if (aliasFor(p.id, db)) void useGit.getState().loadDrift(p.id, db)
                       if (repoOpen) void useGit.getState().loadObjectStatus()
                     }
                   }
@@ -931,8 +948,13 @@ export default function ObjectExplorer({ onAddConnection, onEditConnection }: Pr
   // ---------- connection node ----------
   const renderConnection = (p: Profile): React.JSX.Element => {
     const connKey = `conn|${p.id}`
-    const scoped = repoOpen && repoConnId === p.id && repoDatabases
-    const dbs = scoped ? explorer.databases[p.id]?.filter((d) => repoDatabases!.includes(d)) : explorer.databases[p.id]
+    // Databases this specific connection contributes to the repo — a repo can
+    // bind several connections, each to a different subset of sources.
+    const boundDatabases = repoSources
+      ?.filter((src) => repoBindings?.[src.alias] === p.id)
+      .map((src) => src.database)
+    const scoped = repoOpen && boundDatabases && boundDatabases.length > 0
+    const dbs = scoped ? explorer.databases[p.id]?.filter((d) => boundDatabases!.includes(d)) : explorer.databases[p.id]
     return (
       <div key={connKey}>
         {row(connKey, 0, Icons.server, `${p.name} (${p.server})`, {

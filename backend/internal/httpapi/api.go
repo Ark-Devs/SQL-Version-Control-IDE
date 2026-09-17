@@ -23,6 +23,9 @@ type Deps struct {
 	AcCache  *db.AcCache
 	Settings *settings.Store
 	Session  *settings.SessionStore
+	// Bindings maps a repo's source aliases to local connection profiles. Kept
+	// out of the repo because profile IDs are machine-local.
+	Bindings *settings.BindingStore
 }
 
 // Mount attaches all API routes under /api.

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeftRight, Check, Download, FolderOpen, GitMerge, RefreshCw, Rocket } from 'lucide-react'
+import { ArrowLeftRight, Check, Download, FolderOpen, GitMerge, RefreshCw, Rocket, X } from 'lucide-react'
 import { useGit } from '../../state/gitStore'
 import { useConnections } from '../../state/connectionsStore'
 import { useExplorer } from '../../state/explorerStore'
@@ -187,6 +187,7 @@ export default function GitPanel(): React.JSX.Element {
         <div style={{ fontSize: 11, color: 'var(--text-dim)', userSelect: 'text' }} title={git.info.path}>
           {(git.info.manifest?.databases ?? []).join(', ')} → {git.info.path?.split(/[\\/]/).slice(-1)[0]}
         </div>
+        <SourcesSection />
         <div style={{ display: 'flex', gap: 6 }}>
           <button
             style={{ flex: 1 }}
@@ -319,16 +320,130 @@ export default function GitPanel(): React.JSX.Element {
 }
 
 /**
- * Form to create a system repo from a connection + one or more databases
- * (e.g. HIS = Hospital + Pharmacy + Chan on one server).
+ * Sources tracked by the open repo, each showing which local connection it's
+ * bound to — a repo can span several servers. Lets you add another database
+ * (from any saved connection) or drop one, without recreating the repo.
+ */
+function SourcesSection(): React.JSX.Element {
+  const info = useGit((s) => s.info)
+  const profiles = useConnections((s) => s.profiles)
+  const explorer = useExplorer()
+  const [adding, setAdding] = useState(false)
+  const [connId, setConnId] = useState('')
+  const [database, setDatabase] = useState('')
+
+  const sources = info.manifest?.sources ?? []
+  const bindings = info.bindings ?? {}
+  const profileName = (id?: string): string => profiles.find((p) => p.id === id)?.name ?? '(unbound)'
+  const databases = connId ? explorer.databases[connId] : undefined
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {sources.map((s) => (
+        <div key={s.alias} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
+          <span style={{ color: 'var(--text-dim)' }}>
+            {s.database}
+            {s.alias !== s.database ? ` (${s.alias})` : ''} — {profileName(bindings[s.alias])}
+          </span>
+          <button
+            className="icon"
+            title={`Stop tracking ${s.database}`}
+            onClick={() => {
+              if (confirm(`Stop tracking "${s.database}"? Its scripted files will be removed from the worktree.`)) {
+                void useGit.getState().removeSource(s.alias)
+              }
+            }}
+          >
+            <X size={12} />
+          </button>
+        </div>
+      ))}
+      {adding ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 2 }}>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <select
+              style={{ flex: 1 }}
+              value={connId}
+              onChange={(e) => {
+                setConnId(e.target.value)
+                setDatabase('')
+                if (e.target.value) void explorer.loadDatabases(e.target.value)
+              }}
+            >
+              <option value="">(connection)</option>
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <select style={{ flex: 1 }} value={database} onChange={(e) => setDatabase(e.target.value)} disabled={!connId}>
+              <option value="">(database)</option>
+              {(databases ?? []).map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button
+              style={{ flex: 1 }}
+              disabled={!connId || !database}
+              onClick={async () => {
+                try {
+                  await useGit.getState().addSource(connId, database)
+                  setAdding(false)
+                  setConnId('')
+                  setDatabase('')
+                } catch {
+                  /* error stored in gitStore */
+                }
+              }}
+            >
+              Add
+            </button>
+            <button onClick={() => setAdding(false)}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => setAdding(true)} style={{ alignSelf: 'flex-start', fontSize: 11 }}>
+          + Add database…
+        </button>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Form to create a system repo from one or more databases, possibly spread
+ * across several connections/servers (e.g. Hospital + Pharmacy on one server,
+ * a reporting database on another). Pick a connection, check its databases,
+ * "Add" them to the working set — repeat for another server if needed.
  */
 function NewRepoForm(): React.JSX.Element {
   const profiles = useConnections((s) => s.profiles)
   const explorer = useExplorer()
   const [connId, setConnId] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [picks, setPicks] = useState<{ connId: string; database: string }[]>([])
   const databases = connId ? explorer.databases[connId] : undefined
   const system = ['master', 'model', 'msdb', 'tempdb']
+
+  const profileName = (id: string): string => profiles.find((p) => p.id === id)?.name ?? id
+
+  const addSelected = (): void => {
+    setPicks((prev) => [
+      ...prev,
+      ...[...selected]
+        .filter((d) => !prev.some((p) => p.connId === connId && p.database === d))
+        .map((d) => ({ connId, database: d }))
+    ])
+    setSelected(new Set())
+  }
+
+  const removePick = (pickConnId: string, database: string): void =>
+    setPicks((prev) => prev.filter((p) => !(p.connId === pickConnId && p.database === database)))
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, border: '1px solid var(--border)', padding: 8 }}>
@@ -349,43 +464,63 @@ function NewRepoForm(): React.JSX.Element {
         ))}
       </select>
       {connId && (
-        <div style={{ maxHeight: 160, overflow: 'auto', border: '1px solid var(--border)', padding: 4 }}>
-          {(databases ?? []).filter((d) => !system.includes(d)).map((d) => (
-            <label key={d} style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '2px 4px', fontSize: 12, cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={selected.has(d)}
-                onChange={() =>
-                  setSelected((prev) => {
-                    const next = new Set(prev)
-                    if (next.has(d)) next.delete(d)
-                    else next.add(d)
-                    return next
-                  })
-                }
-              />
-              {d}
-            </label>
+        <>
+          <div style={{ maxHeight: 160, overflow: 'auto', border: '1px solid var(--border)', padding: 4 }}>
+            {(databases ?? []).filter((d) => !system.includes(d)).map((d) => (
+              <label key={d} style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '2px 4px', fontSize: 12, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={selected.has(d)}
+                  onChange={() =>
+                    setSelected((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(d)) next.delete(d)
+                      else next.add(d)
+                      return next
+                    })
+                  }
+                />
+                {d}
+              </label>
+            ))}
+            {databases === null && <div style={{ padding: 4, color: 'var(--text-dim)', fontSize: 12 }}>Loading…</div>}
+          </div>
+          <button disabled={selected.size === 0} onClick={addSelected} style={{ alignSelf: 'flex-start' }}>
+            Add to repo
+          </button>
+        </>
+      )}
+      {picks.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, border: '1px solid var(--border)', padding: 4 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>Databases in this repo:</div>
+          {picks.map((p) => (
+            <div key={`${p.connId}|${p.database}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
+              <span>
+                {p.database} <span style={{ color: 'var(--text-dim)' }}>({profileName(p.connId)})</span>
+              </span>
+              <button className="icon" title="Remove" onClick={() => removePick(p.connId, p.database)}>
+                <X size={12} />
+              </button>
+            </div>
           ))}
-          {databases === null && <div style={{ padding: 4, color: 'var(--text-dim)', fontSize: 12 }}>Loading…</div>}
         </div>
       )}
       <button
         className="primary"
-        disabled={!connId || selected.size === 0}
-        title="One repo can track a whole system across several databases"
+        disabled={picks.length === 0}
+        title="One repo can track a whole system across several databases, even on different servers"
         onClick={async () => {
           const path = await window.svcide.pickFolder('Choose an empty folder for the repository')
           if (!path) return
           try {
-            await useGit.getState().initRepo(path, connId, [...selected])
+            await useGit.getState().initRepo(path, picks)
             await useGit.getState().sync()
           } catch {
             /* error stored in gitStore */
           }
         }}
       >
-        Create Repo ({selected.size} database{selected.size === 1 ? '' : 's'})…
+        Create Repo ({picks.length} database{picks.length === 1 ? '' : 's'})…
       </button>
     </div>
   )

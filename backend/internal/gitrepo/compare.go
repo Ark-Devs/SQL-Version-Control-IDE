@@ -23,6 +23,9 @@ const (
 // CompareObject is one object's comparison result. RepoSQL/TargetSQL are
 // populated only for non-identical objects to keep the payload lean.
 type CompareObject struct {
+	// Alias identifies which tracked source this object belongs to; Database
+	// alone is ambiguous when two sources share a name on different servers.
+	Alias     string `json:"alias"`
 	Database  string `json:"database"`
 	Schema    string `json:"schema"`
 	Name      string `json:"name"`
@@ -87,7 +90,7 @@ func classifyCompare(repo, target map[string]compareEntry) []CompareObject {
 		co := CompareObject{Path: path}
 		switch {
 		case inRepo && inTarget:
-			co.Database, co.Schema, co.Name, co.Type = r.obj.Database, r.obj.Schema, r.obj.Name, r.obj.Type
+			co.Alias, co.Database, co.Schema, co.Name, co.Type = r.obj.SourceAlias(), r.obj.Database, r.obj.Schema, r.obj.Name, r.obj.Type
 			if normalizeSQL(r.sql) == normalizeSQL(t.sql) {
 				co.State = StateIdentical
 			} else {
@@ -95,11 +98,11 @@ func classifyCompare(repo, target map[string]compareEntry) []CompareObject {
 				co.RepoSQL, co.TargetSQL = r.sql, t.sql
 			}
 		case inRepo:
-			co.Database, co.Schema, co.Name, co.Type = r.obj.Database, r.obj.Schema, r.obj.Name, r.obj.Type
+			co.Alias, co.Database, co.Schema, co.Name, co.Type = r.obj.SourceAlias(), r.obj.Database, r.obj.Schema, r.obj.Name, r.obj.Type
 			co.State = StateMissingOnTarget
 			co.RepoSQL = r.sql
 		default:
-			co.Database, co.Schema, co.Name, co.Type = t.obj.Database, t.obj.Schema, t.obj.Name, t.obj.Type
+			co.Alias, co.Database, co.Schema, co.Name, co.Type = t.obj.SourceAlias(), t.obj.Database, t.obj.Schema, t.obj.Name, t.obj.Type
 			co.State = StateOnlyOnTarget
 			co.TargetSQL = t.sql
 		}
@@ -122,25 +125,36 @@ func (m *Manager) ManifestAtRef(ref string) (*Manifest, error) {
 }
 
 // Compare diffs the repo (at ref) against live target databases. For each
-// requested database it scripts the target's objects in memory (writing
+// requested source alias it scripts the target's objects in memory (writing
 // nothing to disk) and reads the repo's objects at ref, then classifies every
-// object. When databases is empty it falls back to the manifest's databases.
+// object. When aliases is empty it falls back to every source in the manifest.
 // Encrypted target objects are skipped with a warning.
-func (m *Manager) Compare(ctx context.Context, poolFor PoolFunc, ref string, databases []string) (*CompareResult, error) {
+func (m *Manager) Compare(ctx context.Context, poolFor PoolFunc, ref string, aliases []string) (*CompareResult, error) {
 	man, err := m.ManifestAtRef(ref)
 	if err != nil {
 		return nil, err
 	}
-	if len(databases) == 0 {
-		databases = man.Databases
+	if len(aliases) == 0 {
+		for _, src := range man.Sources {
+			aliases = append(aliases, src.Alias)
+		}
 	}
 
 	res := &CompareResult{Objects: []CompareObject{}, Warnings: []string{}}
-	for _, database := range databases {
-		// repo side: manifest objects for this database, read at ref
+	for _, alias := range aliases {
+		// An alias the manifest at ref doesn't know is still comparable — the ref
+		// may predate the source — and then its own name is the database name.
+		src, ok := man.SourceByAlias(alias)
+		if !ok {
+			src = Source{Alias: alias, Database: alias}
+		}
+
+		// repo side: manifest objects for this source, read at ref. Matched on
+		// alias, not database: two sources may share a database name, and
+		// matching on the database would pull the other source's objects in.
 		repo := map[string]compareEntry{}
 		for path, obj := range man.Objects {
-			if !strings.EqualFold(obj.Database, database) {
+			if !strings.EqualFold(obj.SourceAlias(), src.Alias) {
 				continue
 			}
 			sql, err := m.FileAtRef(path, ref)
@@ -152,27 +166,28 @@ func (m *Manager) Compare(ctx context.Context, poolFor PoolFunc, ref string, dat
 		}
 
 		// target side: script the live database in memory
-		pool, err := poolFor(database)
+		pool, err := poolFor(src.Alias)
 		if err != nil {
-			return nil, fmt.Errorf("connect to %s: %w", database, err)
+			return nil, fmt.Errorf("connect to %s: %w", src.Alias, err)
 		}
 		modules, err := db.ScriptModules(ctx, pool)
 		if err != nil {
-			return nil, fmt.Errorf("script modules in %s: %w", database, err)
+			return nil, fmt.Errorf("script modules in %s: %w", src.Alias, err)
 		}
 		tables, err := db.ScriptTables(ctx, pool)
 		if err != nil {
-			return nil, fmt.Errorf("script tables in %s: %w", database, err)
+			return nil, fmt.Errorf("script tables in %s: %w", src.Alias, err)
 		}
 		target := map[string]compareEntry{}
 		for _, obj := range append(modules, tables...) {
 			if obj.Encrypted {
-				res.Warnings = append(res.Warnings, fmt.Sprintf("%s.%s.%s is encrypted on the target — skipped", database, obj.Schema, obj.Name))
+				res.Warnings = append(res.Warnings, fmt.Sprintf("%s.%s.%s is encrypted on the target — skipped", src.Alias, obj.Schema, obj.Name))
 				continue
 			}
-			path := ObjectPath(database, obj.Schema, obj.Name, obj.Type)
+			// keyed by alias so both sides of the diff share one key space
+			path := ObjectPath(src.Alias, obj.Schema, obj.Name, obj.Type)
 			target[path] = compareEntry{
-				obj: ManifestObject{Database: database, Schema: obj.Schema, Name: obj.Name, Type: obj.Type},
+				obj: ManifestObject{Alias: src.manifestAlias(), Database: src.Database, Schema: obj.Schema, Name: obj.Name, Type: obj.Type},
 				sql: obj.SQL,
 			}
 		}

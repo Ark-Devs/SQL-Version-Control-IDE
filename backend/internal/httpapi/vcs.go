@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,7 +23,10 @@ func mountVCS(r chi.Router, d *Deps) {
 	r.Route("/api/repo", func(r chi.Router) {
 		r.Post("/init", func(w http.ResponseWriter, req *http.Request) {
 			var body struct {
-				Path      string   `json:"path"`
+				Path    string          `json:"path"`
+				Sources []sourceRequest `json:"sources"`
+
+				// Pre multi-source shape: one connection, N databases.
 				ConnID    string   `json:"connId"`
 				Databases []string `json:"databases"`
 			}
@@ -28,26 +34,40 @@ func mountVCS(r chi.Router, d *Deps) {
 				writeErr(w, http.StatusBadRequest, err)
 				return
 			}
-			if len(body.Databases) == 0 {
-				writeErr(w, http.StatusBadRequest, errors.New("at least one database is required"))
+			if len(body.Sources) == 0 {
+				for _, database := range body.Databases {
+					body.Sources = append(body.Sources, sourceRequest{ConnID: body.ConnID, Database: database})
+				}
+			}
+			if len(body.Sources) == 0 {
+				writeErr(w, http.StatusBadRequest, errors.New("at least one source is required"))
 				return
+			}
+			// Resolve every source before touching disk, so a bad connection ID
+			// doesn't leave an empty repository behind.
+			var sources []gitrepo.Source
+			bindings := map[string]string{}
+			taken := map[string]bool{}
+			for _, s := range body.Sources {
+				src, err := resolveSource(d, s, taken)
+				if err != nil {
+					writeErr(w, http.StatusBadRequest, err)
+					return
+				}
+				sources = append(sources, src)
+				bindings[src.Alias] = s.ConnID
+				taken[strings.ToLower(src.Alias)] = true
 			}
 			if err := d.Repo.Init(body.Path); err != nil {
 				writeErr(w, http.StatusBadRequest, err)
 				return
 			}
-			profile, err := d.Store.Get(body.ConnID)
-			if err != nil {
-				writeErr(w, http.StatusBadRequest, err)
+			man := &gitrepo.Manifest{Sources: sources, Objects: map[string]gitrepo.ManifestObject{}}
+			if err := d.Repo.WriteManifest(man); err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
 				return
 			}
-			man := &gitrepo.Manifest{
-				SourceServer: profile.Server,
-				SourceConnID: body.ConnID,
-				Databases:    body.Databases,
-				Objects:      map[string]gitrepo.ManifestObject{},
-			}
-			if err := d.Repo.WriteManifest(man); err != nil {
+			if err := d.Bindings.SetAll(d.Repo.Path(), bindings); err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
 			}
@@ -71,7 +91,103 @@ func mountVCS(r chi.Router, d *Deps) {
 				writeErr(w, http.StatusBadRequest, err)
 				return
 			}
+			if err := autoBind(d); err != nil {
+				writeErr(w, http.StatusInternalServerError, fmt.Errorf("bind repository sources: %w", err))
+				return
+			}
 			repoInfo(w, d, map[string]any{"migratedLayout": migrated})
+		})
+
+		// Sources tracked by the open repository, with their machine-local
+		// connection bindings. Add/remove let a database join or leave an
+		// existing repo — at init is not the only time that decision is made.
+		r.Get("/sources", func(w http.ResponseWriter, _ *http.Request) {
+			man, err := d.Repo.ReadManifest()
+			if err != nil {
+				writeErr(w, statusFor(err), err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"sources":  man.Sources,
+				"bindings": d.Bindings.Get(d.Repo.Path()),
+			})
+		})
+
+		// Adding a source only records it; the objects arrive on the next sync.
+		// The manifest change is left uncommitted for review in the Git panel.
+		r.Post("/sources", func(w http.ResponseWriter, req *http.Request) {
+			var s sourceRequest
+			if err := decode(req, &s); err != nil {
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			man, err := d.Repo.ReadManifest()
+			if err != nil {
+				writeErr(w, statusFor(err), err)
+				return
+			}
+			taken := map[string]bool{}
+			for _, existing := range man.Sources {
+				taken[strings.ToLower(existing.Alias)] = true
+			}
+			src, err := resolveSource(d, s, taken)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			man.Sources = append(man.Sources, src)
+			if err := d.Repo.WriteManifest(man); err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			if err := d.Bindings.Bind(d.Repo.Path(), src.Alias, s.ConnID); err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			repoInfo(w, d, nil)
+		})
+
+		// Removing a source drops its manifest entries and its scripted files,
+		// leaving the deletions staged in the worktree for the user to commit.
+		r.Delete("/sources", func(w http.ResponseWriter, req *http.Request) {
+			alias := req.URL.Query().Get("alias")
+			if alias == "" {
+				writeErr(w, http.StatusBadRequest, errors.New("alias is required"))
+				return
+			}
+			man, err := d.Repo.ReadManifest()
+			if err != nil {
+				writeErr(w, statusFor(err), err)
+				return
+			}
+			src, ok := man.SourceByAlias(alias)
+			if !ok {
+				writeErr(w, http.StatusBadRequest, fmt.Errorf("source %q is not tracked by this repository", alias))
+				return
+			}
+			kept := make([]gitrepo.Source, 0, len(man.Sources))
+			for _, s := range man.Sources {
+				if !strings.EqualFold(s.Alias, src.Alias) {
+					kept = append(kept, s)
+				}
+			}
+			man.Sources = kept
+			removeSourceFiles(d.Repo.Path(), man, src.Alias)
+			if err := d.Repo.WriteManifest(man); err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			remaining := d.Bindings.Get(d.Repo.Path())
+			for a := range remaining {
+				if strings.EqualFold(a, src.Alias) {
+					delete(remaining, a)
+				}
+			}
+			if err := d.Bindings.SetAll(d.Repo.Path(), remaining); err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			repoInfo(w, d, nil)
 		})
 
 		r.Get("/info", func(w http.ResponseWriter, _ *http.Request) {
@@ -88,18 +204,7 @@ func mountVCS(r chi.Router, d *Deps) {
 				writeErr(w, http.StatusBadRequest, err)
 				return
 			}
-			var body struct {
-				ConnID string `json:"connId"`
-			}
-			_ = decode(req, &body) // optional override of the manifest source
-			connID := man.SourceConnID
-			if body.ConnID != "" {
-				connID = body.ConnID
-			}
-			poolFor := func(database string) (*sql.DB, error) {
-				return d.Registry.Get(connID, database)
-			}
-			res, err := d.Repo.Sync(req.Context(), poolFor, man)
+			res, err := d.Repo.Sync(req.Context(), repoPoolFunc(d, man), man)
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
@@ -113,6 +218,7 @@ func mountVCS(r chi.Router, d *Deps) {
 		// is open or the database isn't tracked by the manifest.
 		r.Post("/sync-object", func(w http.ResponseWriter, req *http.Request) {
 			var body struct {
+				ConnID   string `json:"connId"`
 				Database string `json:"database"`
 				Schema   string `json:"schema"`
 				Name     string `json:"name"`
@@ -137,18 +243,17 @@ func mountVCS(r chi.Router, d *Deps) {
 				writeErr(w, http.StatusBadRequest, err)
 				return
 			}
-			tracked := false
-			for _, name := range man.Databases {
-				if strings.EqualFold(name, body.Database) {
-					tracked = true
-					break
-				}
-			}
-			if !tracked {
-				writeJSON(w, http.StatusOK, map[string]any{"skipped": true, "reason": "database not tracked by repository"})
+			src, ok := sourceForConn(d, man, body.ConnID, body.Database)
+			if !ok {
+				writeJSON(w, http.StatusOK, map[string]any{"skipped": true, "reason": "database is not tracked by this repository on this connection"})
 				return
 			}
-			pool, err := d.Registry.Get(man.SourceConnID, body.Database)
+			connID, ok := d.Bindings.ConnID(d.Repo.Path(), src.Alias)
+			if !ok {
+				writeJSON(w, http.StatusOK, map[string]any{"skipped": true, "reason": fmt.Sprintf("source %q is not bound to a connection on this machine", src.Alias)})
+				return
+			}
+			pool, err := d.Registry.Get(connID, src.Database)
 			if err != nil {
 				writeErr(w, http.StatusBadRequest, err)
 				return
@@ -166,7 +271,7 @@ func mountVCS(r chi.Router, d *Deps) {
 					return
 				}
 			}
-			res, err := d.Repo.SyncObject(body.Database, body.Schema, body.Name, obj, man)
+			res, err := d.Repo.SyncObject(src, body.Schema, body.Name, obj, man)
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
@@ -177,33 +282,27 @@ func mountVCS(r chi.Router, d *Deps) {
 		// Drift: compare one database against the repo without writing.
 		// Powers the green (new) / yellow (modified) explorer badges.
 		r.Get("/drift/{connId}/{db}", func(w http.ResponseWriter, req *http.Request) {
-			db := chi.URLParam(req, "db")
+			connID, database := chi.URLParam(req, "connId"), chi.URLParam(req, "db")
 			// Drift compares against the repo baseline, so it only means
-			// anything for databases the manifest tracks — an untracked
-			// database has no files and every object would falsely report
-			// as new/modified.
+			// anything for the exact source the manifest tracks — matching on
+			// the database name alone would report drift for another server's
+			// database that merely shares the name.
 			man, err := d.Repo.ReadManifest()
 			if err != nil {
 				writeErr(w, statusFor(err), err)
 				return
 			}
-			tracked := false
-			for _, name := range man.Databases {
-				if strings.EqualFold(name, db) {
-					tracked = true
-					break
-				}
-			}
-			if !tracked {
+			src, ok := sourceForConn(d, man, connID, database)
+			if !ok {
 				writeJSON(w, http.StatusOK, gitrepo.DriftReport{})
 				return
 			}
-			pool, err := d.Registry.Get(chi.URLParam(req, "connId"), db)
+			pool, err := d.Registry.Get(connID, src.Database)
 			if err != nil {
 				writeErr(w, http.StatusBadRequest, err)
 				return
 			}
-			report, err := d.Repo.Drift(req.Context(), pool, db)
+			report, err := d.Repo.Drift(req.Context(), pool, src.Alias)
 			if err != nil {
 				writeErr(w, statusFor(err), err)
 				return
@@ -363,7 +462,9 @@ func mountVCS(r chi.Router, d *Deps) {
 			var body struct {
 				Ref          string   `json:"ref"`
 				TargetConnID string   `json:"targetConnId"`
-				Databases    []string `json:"databases"`
+				Aliases      []string `json:"aliases"`
+				// Pre multi-source shape: names that were both alias and database.
+				Databases []string `json:"databases"`
 			}
 			if err := decode(req, &body); err != nil {
 				writeErr(w, http.StatusBadRequest, err)
@@ -372,18 +473,37 @@ func mountVCS(r chi.Router, d *Deps) {
 			if body.Ref == "" {
 				body.Ref = "HEAD"
 			}
-			if body.TargetConnID == "" {
-				writeErr(w, http.StatusBadRequest, errors.New("targetConnId is required"))
-				return
+			if len(body.Aliases) == 0 {
+				body.Aliases = body.Databases
 			}
 			if !d.Repo.IsOpen() {
 				writeErr(w, http.StatusBadRequest, gitrepo.ErrNoRepo)
 				return
 			}
-			poolFor := func(database string) (*sql.DB, error) {
-				return d.Registry.Get(body.TargetConnID, database)
+			// Compare reads the repo side at ref, so aliases resolve against the
+			// manifest at that ref too — a source may have been added since.
+			refMan, err := d.Repo.ManifestAtRef(body.Ref)
+			if err != nil {
+				writeErr(w, statusFor(err), err)
+				return
 			}
-			res, err := d.Repo.Compare(req.Context(), poolFor, body.Ref, body.Databases)
+			var poolFor gitrepo.PoolFunc
+			if body.TargetConnID != "" {
+				// Every alias is scripted from the one target connection the user
+				// picked: compare answers "what would deploying here change?".
+				poolFor = func(alias string) (*sql.DB, error) {
+					src, ok := refMan.SourceByAlias(alias)
+					if !ok {
+						return nil, fmt.Errorf("source %q is not tracked at %s", alias, body.Ref)
+					}
+					return d.Registry.Get(body.TargetConnID, src.Database)
+				}
+			} else {
+				// No explicit target: compare against each source's own bound
+				// database — "what would checking out this branch change?".
+				poolFor = repoPoolFunc(d, refMan)
+			}
+			res, err := d.Repo.Compare(req.Context(), poolFor, body.Ref, body.Aliases)
 			if err != nil {
 				writeErr(w, statusFor(err), err)
 				return
@@ -514,22 +634,205 @@ func slimCompare(res *gitrepo.CompareResult) map[string]any {
 func repoInfo(w http.ResponseWriter, d *Deps, extra map[string]any) {
 	branch, _ := d.Repo.CurrentBranch()
 	man, _ := d.Repo.ReadManifest()
-	var databases []string
+	bindings := d.Bindings.Get(d.Repo.Path())
+
+	// databases/sourceConnId/sourceServer are derived, not stored: the manifest
+	// no longer carries a connection and a repo can span servers. They are
+	// emitted — including inside "manifest", where the current renderer looks
+	// for them — so a single-source workspace keeps working unchanged.
+	var (
+		databases  []string
+		connID     string
+		server     string
+		manifestJS any
+	)
 	if man != nil {
-		databases = man.Databases
+		databases = man.DatabaseNames()
+		if len(man.Sources) > 0 {
+			first := man.Sources[0]
+			server = first.Server
+			connID, _ = d.Bindings.ConnID(d.Repo.Path(), first.Alias)
+		}
+		manifestJS = map[string]any{
+			"sources":      man.Sources,
+			"objects":      man.Objects,
+			"databases":    databases,
+			"sourceConnId": connID,
+			"sourceServer": server,
+		}
 	}
+
 	resp := map[string]any{
 		"open":            true,
 		"path":            d.Repo.Path(),
 		"branch":          branch,
-		"manifest":        man,
+		"manifest":        manifestJS,
 		"sqlFolderExists": d.Repo.SQLFolderExists(),
 		"databases":       databases,
+		"sourceConnId":    connID,
+		"bindings":        bindings,
 	}
 	for k, v := range extra {
 		resp[k] = v
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// sourceRequest is one database a repo should track, as the client names it:
+// a local connection plus a database, with an optional repo-side alias.
+type sourceRequest struct {
+	Alias    string `json:"alias"`
+	ConnID   string `json:"connId"`
+	Database string `json:"database"`
+}
+
+// resolveSource turns a request into a manifest Source, recording the server
+// from the local profile. taken holds the lowercased aliases already in use.
+func resolveSource(d *Deps, s sourceRequest, taken map[string]bool) (gitrepo.Source, error) {
+	if s.Database == "" {
+		return gitrepo.Source{}, errors.New("database is required for every source")
+	}
+	profile, err := d.Store.Get(s.ConnID)
+	if err != nil {
+		return gitrepo.Source{}, fmt.Errorf("source %s: %w", s.Database, err)
+	}
+	alias := s.Alias
+	if alias == "" {
+		alias = uniqueAlias(s.Database, profile.Server, taken)
+	}
+	if taken[strings.ToLower(alias)] {
+		return gitrepo.Source{}, fmt.Errorf("alias %q is already used by another source", alias)
+	}
+	return gitrepo.Source{Alias: alias, Database: s.Database, Server: profile.Server}, nil
+}
+
+// uniqueAlias names a source's tree under SQL/. The database name is used
+// as-is; when a second source claims the same name — the point of aliases,
+// since two servers can each host a "Hospital" — the server disambiguates.
+func uniqueAlias(database, server string, taken map[string]bool) string {
+	if !taken[strings.ToLower(database)] {
+		return database
+	}
+	base := database + "@" + serverToken(server)
+	alias := base
+	for i := 2; taken[strings.ToLower(alias)]; i++ {
+		alias = fmt.Sprintf("%s-%d", base, i)
+	}
+	return alias
+}
+
+// serverToken reduces a server address to a folder-friendly token:
+// `sql01\dev,1433` → `sql01-dev`.
+func serverToken(server string) string {
+	token := server
+	if i := strings.IndexAny(token, ",;"); i >= 0 {
+		token = token[:i]
+	}
+	token = strings.Trim(strings.NewReplacer(`\`, "-", "/", "-", ":", "-").Replace(token), "-")
+	if token == "" {
+		return "server"
+	}
+	return token
+}
+
+// sourceForConn resolves a live (connection, database) pair to the manifest
+// source it belongs to. The binding is what makes the answer specific: two
+// servers can both host a "Hospital", and only one of them is this repo's. An
+// empty connID means the caller didn't say which connection (the pre
+// multi-source request shape), so the database name alone decides.
+func sourceForConn(d *Deps, man *gitrepo.Manifest, connID, database string) (gitrepo.Source, bool) {
+	for _, src := range man.Sources {
+		if !strings.EqualFold(src.Database, database) {
+			continue
+		}
+		// The binding is what disambiguates: two sources can share a database
+		// name on different servers, so the name alone never identifies one.
+		if bound, ok := d.Bindings.ConnID(d.Repo.Path(), src.Alias); ok && bound == connID {
+			return src, true
+		}
+	}
+	return gitrepo.Source{}, false
+}
+
+// repoPoolFunc resolves a source alias to a pool through the machine-local
+// binding, which is what lets each source sit on a different server.
+func repoPoolFunc(d *Deps, man *gitrepo.Manifest) gitrepo.PoolFunc {
+	repoPath := d.Repo.Path()
+	return func(alias string) (*sql.DB, error) {
+		src, ok := man.SourceByAlias(alias)
+		if !ok {
+			return nil, fmt.Errorf("source %q is not tracked by this repository", alias)
+		}
+		connID, ok := d.Bindings.ConnID(repoPath, alias)
+		if !ok {
+			return nil, fmt.Errorf("source %q is not bound to a connection on this machine", alias)
+		}
+		return d.Registry.Get(connID, src.Database)
+	}
+}
+
+// autoBind fills in missing alias→connection bindings after a repo is opened.
+// A repo cloned from a teammate carries sources but no bindings, so each source
+// is matched to a saved profile on the same server; a manifest migrated from
+// the pre multi-source shape names the profile it was synced from, which beats
+// guessing. Done here rather than in gitrepo to keep the repo layer free of any
+// connection-profile dependency.
+func autoBind(d *Deps) error {
+	man, err := d.Repo.ReadManifest()
+	if err != nil {
+		return err
+	}
+	repoPath := d.Repo.Path()
+	profiles := d.Store.List()
+	for _, src := range man.Sources {
+		if _, bound := d.Bindings.ConnID(repoPath, src.Alias); bound {
+			continue
+		}
+		connID := ""
+		if man.LegacyConnID != "" {
+			if _, err := d.Store.Get(man.LegacyConnID); err == nil {
+				connID = man.LegacyConnID
+			}
+		}
+		if connID == "" && src.Server != "" {
+			for _, p := range profiles {
+				if strings.EqualFold(p.Server, src.Server) {
+					connID = p.ID
+					break
+				}
+			}
+		}
+		if connID == "" {
+			continue // no match on this machine; the user binds it explicitly
+		}
+		if err := d.Bindings.Bind(repoPath, src.Alias, connID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeSourceFiles deletes the worktree files of one source, drops its
+// manifest entries, and prunes the directories that empty out. os.Remove on a
+// directory only succeeds when it is empty, so a shared parent survives.
+func removeSourceFiles(root string, man *gitrepo.Manifest, alias string) {
+	var dirs []string
+	for path, obj := range man.Objects {
+		if !strings.EqualFold(obj.SourceAlias(), alias) {
+			continue
+		}
+		abs := filepath.Join(root, filepath.FromSlash(path))
+		_ = os.Remove(abs)
+		delete(man.Objects, path)
+		for dir := filepath.Dir(abs); len(dir) > len(root); dir = filepath.Dir(dir) {
+			dirs = append(dirs, dir)
+		}
+	}
+	// deepest first, so a parent is empty by the time we reach it
+	sort.Slice(dirs, func(i, j int) bool { return len(dirs[i]) > len(dirs[j]) })
+	for _, dir := range dirs {
+		_ = os.Remove(dir)
+	}
 }
 
 func statusFor(err error) int {

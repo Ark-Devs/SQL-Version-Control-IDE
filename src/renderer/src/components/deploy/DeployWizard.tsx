@@ -144,7 +144,9 @@ export default function DeployWizard({ onClose }: { onClose: () => void }): Reac
                 />
                 <span style={{ color: 'var(--text-dim)', width: 42, fontSize: 10, textTransform: 'uppercase' }}>{s.type}</span>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  <span style={{ color: 'var(--text-dim)' }}>{s.database}.</span>
+                  <span style={{ color: 'var(--text-dim)' }}>
+                    {s.alias && s.alias !== s.database ? `${s.database} (${s.alias}).` : `${s.database}.`}
+                  </span>
                   {s.schema}.{s.name}
                 </span>
               </div>
@@ -165,7 +167,7 @@ export default function DeployWizard({ onClose }: { onClose: () => void }): Reac
                 </h3>
                 {(result.steps ?? []).map((s) => (
                   <div key={s.path} style={{ padding: '3px 0', color: s.ok ? 'var(--text)' : 'var(--error)' }}>
-                    {s.ok ? <CheckCircle2 size={13} style={{ verticalAlign: -2, marginRight: 4, color: 'var(--success)' }} /> : <XCircle size={13} style={{ verticalAlign: -2, marginRight: 4, color: 'var(--error)' }} />}<span style={{ color: 'var(--text-dim)' }}>{s.database}.</span>
+                    {s.ok ? <CheckCircle2 size={13} style={{ verticalAlign: -2, marginRight: 4, color: 'var(--success)' }} /> : <XCircle size={13} style={{ verticalAlign: -2, marginRight: 4, color: 'var(--error)' }} />}<span style={{ color: 'var(--text-dim)' }}>{s.alias && s.alias !== s.database ? `${s.database} (${s.alias}).` : `${s.database}.`}</span>
                     {s.object}
                     {s.error && <div style={{ fontSize: 12, paddingLeft: 18, fontFamily: 'var(--font-mono)' }}>{s.error}</div>}
                   </div>
