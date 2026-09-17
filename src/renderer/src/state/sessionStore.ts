@@ -88,10 +88,15 @@ export async function flushSession(): Promise<void> {
 }
 
 /** Same rule the explorer uses: drift only makes sense for databases the open
- *  repo actually tracks — untracked ones have no baseline to compare against. */
+ *  repo actually tracks — untracked ones have no baseline to compare against.
+ *  A database name alone never identifies a source, since two servers can
+ *  share one, so this resolves through the local connection binding. */
 function isTracked(connId: string, db: string): boolean {
   const info = useGit.getState().info
-  return !!info.open && info.manifest?.sourceConnId === connId && !!info.databases?.includes(db)
+  if (!info.open) return false
+  return !!info.manifest?.sources?.some(
+    (s) => s.database.toLowerCase() === db.toLowerCase() && info.bindings?.[s.alias] === connId
+  )
 }
 
 const OBJ_MARKER = '|obj|'

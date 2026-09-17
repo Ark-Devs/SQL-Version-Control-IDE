@@ -1,4 +1,16 @@
-import { get, post } from './client'
+import { del, get, post } from './client'
+
+/** One tracked database. `alias` is its repo-side identity (the folder under
+ *  SQL/) and stays stable across machines; the connection it lives on is a
+ *  local binding, not part of the shared manifest. */
+export interface RepoSource {
+  alias: string
+  database: string
+  server?: string
+}
+
+/** alias → local connection profile id. Machine-local, never committed. */
+export type RepoBindings = Record<string, string>
 
 export interface RepoInfo {
   open: boolean
@@ -6,15 +18,21 @@ export interface RepoInfo {
   branch?: string
   /** whether <repo>/SQL/ exists on disk — absent + manifest databases = first sync */
   sqlFolderExists?: boolean
-  /** databases tracked by the manifest (mirror of manifest.databases) */
+  /** database name of every tracked source, in order */
   databases?: string[]
   /** true when opening the repo migrated a legacy DB/ layout to SQL/ */
   migratedLayout?: boolean
+  bindings?: RepoBindings
   manifest?: {
+    sources: RepoSource[]
+    /** derived compatibility mirrors of the first source */
     sourceServer: string
     sourceConnId: string
     databases: string[]
-    objects: Record<string, { database: string; schema: string; name: string; type: string }>
+    objects: Record<
+      string,
+      { alias?: string; database: string; schema: string; name: string; type: string }
+    >
   }
 }
 
@@ -28,7 +46,7 @@ export interface ObjectStatusEntry {
   path: string
 }
 
-/** "database|schema|name" → VC state, across every database in the repo. */
+/** "alias|schema|name" → VC state, across every tracked source in the repo. */
 export type ObjectStatusMap = Record<string, ObjectStatusEntry>
 
 export interface ObjectStatusResponse {
@@ -86,12 +104,16 @@ const enc = encodeURIComponent
 
 export const gitApi = {
   info: () => get<RepoInfo>('/repo/info'),
-  init: (path: string, connId: string, databases: string[]) =>
-    post<RepoInfo>('/repo/init', { path, connId, databases }),
+  init: (path: string, sources: { connId: string; database: string }[]) =>
+    post<RepoInfo>('/repo/init', { path, sources }),
+  sources: () => get<{ sources: RepoSource[]; bindings: RepoBindings }>('/repo/sources'),
+  addSource: (connId: string, database: string) =>
+    post<RepoInfo>('/repo/sources', { connId, database }),
+  removeSource: (alias: string) => del<RepoInfo>(`/repo/sources?alias=${enc(alias)}`),
   open: (path: string) => post<RepoInfo>('/repo/open', { path }),
   sync: () => post<SyncResult>('/repo/sync', {}),
-  syncObject: (database: string, schema: string, name: string) =>
-    post<SyncObjectResult>('/repo/sync-object', { database, schema, name }),
+  syncObject: (connId: string, database: string, schema: string, name: string) =>
+    post<SyncObjectResult>('/repo/sync-object', { connId, database, schema, name }),
   drift: (connId: string, db: string) =>
     get<DriftReport>(`/repo/drift/${enc(connId)}/${enc(db)}`),
   changes: () => get<FileChange[] | null>('/repo/changes'),

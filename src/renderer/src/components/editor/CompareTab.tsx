@@ -23,7 +23,16 @@ const isDeployable = (o: CompareObject): boolean =>
  * then deploy the objects you select. All state is local to the tab.
  */
 export default function CompareTab(): React.JSX.Element {
-  const manifestDbs = useGit((s) => s.info.manifest?.databases ?? [])
+  // `?? []` must not live inside the selector: a fresh array on every call
+  // makes useSyncExternalStore see a "changed" snapshot every render and spin
+  // forever. Select the possibly-undefined value, default it after.
+  const rawManifestSources = useGit((s) => s.info.manifest?.sources)
+  const manifestSources = rawManifestSources ?? []
+  const manifestAliases = useMemo(() => manifestSources.map((src) => src.alias), [manifestSources])
+  const aliasLabel = useMemo(() => {
+    const m = new Map(manifestSources.map((src) => [src.alias, src.database === src.alias ? src.database : `${src.database} (${src.alias})`]))
+    return (alias: string): string => m.get(alias) ?? alias
+  }, [manifestSources])
   const branches = useGit((s) => s.branches)
   const repoOpen = useGit((s) => s.info.open)
   const profiles = useConnections((s) => s.profiles)
@@ -38,7 +47,7 @@ export default function CompareTab(): React.JSX.Element {
 
   const [ref, setRef] = useState('HEAD')
   const [connId, setConnId] = useState('')
-  const [dbs, setDbs] = useState<Set<string>>(() => new Set(manifestDbs))
+  const [aliases, setAliases] = useState<Set<string>>(() => new Set(manifestAliases))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [objects, setObjects] = useState<CompareObject[] | null>(null)
@@ -55,9 +64,9 @@ export default function CompareTab(): React.JSX.Element {
   // once when the list first becomes available. `seeded` starts true when the
   // manifest was already present at mount, so unchecking every database later
   // does not trigger a re-seed.
-  const [seeded, setSeeded] = useState(manifestDbs.length > 0)
-  if (!seeded && manifestDbs.length > 0) {
-    setDbs(new Set(manifestDbs))
+  const [seeded, setSeeded] = useState(manifestAliases.length > 0)
+  if (!seeded && manifestAliases.length > 0) {
+    setAliases(new Set(manifestAliases))
     setSeeded(true)
   }
 
@@ -70,9 +79,9 @@ export default function CompareTab(): React.JSX.Element {
   const grouped = useMemo(() => {
     const map = new Map<string, CompareObject[]>()
     for (const o of drift) {
-      const list = map.get(o.database) ?? []
+      const list = map.get(o.alias) ?? []
       list.push(o)
-      map.set(o.database, list)
+      map.set(o.alias, list)
     }
     return [...map.entries()]
   }, [drift])
@@ -86,7 +95,7 @@ export default function CompareTab(): React.JSX.Element {
     try {
       const res =
         mode === 'repo'
-          ? await compareApi.run(ref.trim() || 'HEAD', connId, [...dbs])
+          ? await compareApi.run(ref.trim() || 'HEAD', connId, [...aliases])
           : await compareApi.live(sourceConnId, sourceDb.trim(), connId, targetDb.trim())
       const objs = res.objects ?? []
       setObjects(objs)
@@ -260,16 +269,16 @@ export default function CompareTab(): React.JSX.Element {
             </label>
 
             <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-              {manifestDbs.map((d) => {
-                const on = dbs.has(d)
+              {manifestAliases.map((alias) => {
+                const on = aliases.has(alias)
                 return (
                   <button
-                    key={d}
+                    key={alias}
                     onClick={() =>
-                      setDbs((prev) => {
+                      setAliases((prev) => {
                         const next = new Set(prev)
-                        if (next.has(d)) next.delete(d)
-                        else next.add(d)
+                        if (next.has(alias)) next.delete(alias)
+                        else next.add(alias)
                         return next
                       })
                     }
@@ -283,7 +292,7 @@ export default function CompareTab(): React.JSX.Element {
                     }}
                     title={on ? 'Included in compare' : 'Excluded from compare'}
                   >
-                    {d}
+                    {aliasLabel(alias)}
                   </button>
                 )
               })}
@@ -350,7 +359,7 @@ export default function CompareTab(): React.JSX.Element {
           disabled={
             busy ||
             (mode === 'repo'
-              ? !connId || dbs.size === 0
+              ? !connId || aliases.size === 0
               : !sourceConnId || !sourceDb.trim() || !connId || !targetDb.trim())
           }
           onClick={() => void runCompare()}
@@ -405,14 +414,14 @@ export default function CompareTab(): React.JSX.Element {
           ) : drift.length === 0 ? (
             <div style={{ padding: 12, color: 'var(--text-dim)', fontSize: 12 }}>
               {mode === 'repo'
-                ? `No differences — ${label(dbs.size)} match the repo at ${ref.trim() || 'HEAD'}.`
+                ? `No differences — ${label(aliases.size)} match the repo at ${ref.trim() || 'HEAD'}.`
                 : `No differences — ${sourceDb} and ${targetDb} match.`}
             </div>
           ) : (
-            grouped.map(([database, rows]) => (
-              <div key={database}>
+            grouped.map(([alias, rows]) => (
+              <div key={alias}>
                 <div className="section-label" style={{ padding: '6px 10px', background: 'var(--bg-panel-alt)', borderBottom: '1px solid var(--border)' }}>
-                  {database} ({rows.length})
+                  {aliasLabel(alias)} ({rows.length})
                 </div>
                 {rows.map((o) => {
                   const meta = STATE_META[o.state as Exclude<CompareState, 'identical'>]

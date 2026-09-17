@@ -11,9 +11,12 @@ import (
 	"svcide/internal/gitrepo"
 )
 
-// Step is one object deployment within a plan.
+// Step is one object deployment within a plan. Alias is the repo-side source
+// identity and Database the physical database name — they differ when two
+// sources on different servers share a database name.
 type Step struct {
 	Path     string `json:"path"`
+	Alias    string `json:"alias"`
 	Database string `json:"database"`
 	Schema   string `json:"schema"`
 	Name     string `json:"name"`
@@ -22,14 +25,19 @@ type Step struct {
 }
 
 // Plan is a prepared deployment: ordered scripts read from a git ref.
-// Each object deploys to its own database name on the target connection
-// (a system repo can span Hospital, Pharmacy, … on one server).
+//
+// Two targeting modes coexist. TargetConnID sends every object to one
+// connection ("deploy this branch to staging"), each object landing in its own
+// database name there. Targets maps a source alias to the connection bound to
+// it, so each source deploys to its own server ("apply to each source").
+// Targets wins per alias when present; TargetConnID is the fallback.
 type Plan struct {
-	ID           string   `json:"id"`
-	Ref          string   `json:"ref"`
-	TargetConnID string   `json:"targetConnId"`
-	Steps        []Step   `json:"steps"`
-	Warnings     []string `json:"warnings"`
+	ID           string            `json:"id"`
+	Ref          string            `json:"ref"`
+	TargetConnID string            `json:"targetConnId"`
+	Targets      map[string]string `json:"targets,omitempty"` // alias → connection profile ID
+	Steps        []Step            `json:"steps"`
+	Warnings     []string          `json:"warnings"`
 }
 
 // typeOrder deploys dependencies before dependents: functions → views →
@@ -55,7 +63,9 @@ func NewPlanner(repo *gitrepo.Manager) *Planner {
 
 // BuildPlan reads the requested object files at ref and orders them for
 // deployment. paths empty = all deployable objects in the manifest at ref.
-func (p *Planner) BuildPlan(ref string, paths []string, targetConnID string) (*Plan, error) {
+// targets (alias → connection profile ID) is optional: aliases missing from it
+// fall back to targetConnID.
+func (p *Planner) BuildPlan(ref string, paths []string, targetConnID string, targets map[string]string) (*Plan, error) {
 	manifest, err := p.manifestAt(ref)
 	if err != nil {
 		return nil, err
@@ -65,6 +75,7 @@ func (p *Planner) BuildPlan(ref string, paths []string, targetConnID string) (*P
 		ID:           uuid.NewString(),
 		Ref:          ref,
 		TargetConnID: targetConnID,
+		Targets:      targets,
 	}
 
 	selected := paths
@@ -95,6 +106,7 @@ func (p *Planner) BuildPlan(ref string, paths []string, targetConnID string) (*P
 		}
 		plan.Steps = append(plan.Steps, Step{
 			Path:     path,
+			Alias:    obj.SourceAlias(),
 			Database: obj.Database,
 			Schema:   obj.Schema,
 			Name:     obj.Name,
@@ -103,9 +115,10 @@ func (p *Planner) BuildPlan(ref string, paths []string, targetConnID string) (*P
 		})
 	}
 
+	// group by alias, not database: a database name can repeat across servers
 	sort.SliceStable(plan.Steps, func(i, j int) bool {
-		if plan.Steps[i].Database != plan.Steps[j].Database {
-			return plan.Steps[i].Database < plan.Steps[j].Database
+		if plan.Steps[i].Alias != plan.Steps[j].Alias {
+			return plan.Steps[i].Alias < plan.Steps[j].Alias
 		}
 		return typeOrder[plan.Steps[i].Type] < typeOrder[plan.Steps[j].Type]
 	})

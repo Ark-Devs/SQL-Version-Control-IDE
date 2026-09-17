@@ -65,16 +65,16 @@ async function mirrorExecutedDdl(tab: Tab, sql: string, snap: QuerySnapshot): Pr
     if (!useSettings.getState().settings.mirrorOnExecute) return
     if (snap.messages?.some((m) => m.kind === 'error')) return
     const git = useGit.getState()
-    const man = git.info.manifest
-    if (!git.info.open || !man || man.sourceConnId !== tab.connId) return
     const database = tab.database ?? ''
-    if (!database || !man.databases?.includes(database)) return
+    if (!git.info.open || !tab.connId || !database) return
+    // Whether this connection+database is actually a tracked source is the
+    // backend's call — it owns the alias bindings and skips harmlessly.
 
     const objects = detectDdlObjects(sql)
     if (objects.length === 0) return
     for (const o of objects) {
       try {
-        await gitApi.syncObject(database, o.schema, o.name)
+        await gitApi.syncObject(tab.connId, database, o.schema, o.name)
       } catch (err) {
         console.warn(`live mirror: sync-object failed for ${o.schema}.${o.name}:`, err)
       }

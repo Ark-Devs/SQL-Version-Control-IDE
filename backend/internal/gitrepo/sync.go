@@ -15,22 +15,61 @@ import (
 
 // Manifest maps repo files back to database objects. It lives at
 // .svcide/manifest.json inside the repo. One repo can track a whole system
-// spanning several databases (e.g. Hospital, Pharmacy) on one server.
+// spanning several databases, which may live on different servers.
 type Manifest struct {
-	SourceServer string                    `json:"sourceServer"`
-	SourceConnID string                    `json:"sourceConnId"`
-	Databases    []string                  `json:"databases"`
-	Objects      map[string]ManifestObject `json:"objects"` // repo path (slash) → object
+	Sources []Source                  `json:"sources"`
+	Objects map[string]ManifestObject `json:"objects"` // repo path (slash) → object
 
-	// legacy single-database field, migrated into Databases on read
-	SourceDatabase string `json:"sourceDatabase,omitempty"`
+	// Pre-multi-source fields. Migrated into Sources on read and cleared so
+	// they are never written back.
+	SourceServer   string   `json:"sourceServer,omitempty"`
+	SourceConnID   string   `json:"sourceConnId,omitempty"`
+	Databases      []string `json:"databases,omitempty"`
+	SourceDatabase string   `json:"sourceDatabase,omitempty"`
+
+	// LegacyConnID carries a pre-multi-source manifest's connection profile so
+	// callers can seed a local binding for it. Never serialized: profile IDs are
+	// machine-local and have no meaning in a shared repo.
+	LegacyConnID string `json:"-"`
+}
+
+// Source binds one tracked database to the server it lives on. Alias is the
+// repo-side identity: it names the folder under SQL/ and tags every object, so
+// two databases sharing a name on different servers stay distinct. The local
+// connection profile is deliberately absent — profile IDs are machine-local, so
+// alias→connection bindings live outside the repo.
+type Source struct {
+	Alias    string `json:"alias"`
+	Database string `json:"database"`
+	Server   string `json:"server,omitempty"`
 }
 
 type ManifestObject struct {
+	// Alias is empty when it matches Database, so single-source repos keep
+	// byte-identical manifests. Read it through SourceAlias().
+	Alias    string `json:"alias,omitempty"`
 	Database string `json:"database"`
 	Schema   string `json:"schema"`
 	Name     string `json:"name"`
 	Type     string `json:"type"`
+}
+
+// SourceAlias returns the object's repo-side source identity. Objects written
+// before multi-source support carry no alias; their database name is the alias.
+func (o ManifestObject) SourceAlias() string {
+	if o.Alias != "" {
+		return o.Alias
+	}
+	return o.Database
+}
+
+// manifestAlias returns the alias to record on objects: empty when it matches
+// the database name, keeping single-source manifests unchanged.
+func (s Source) manifestAlias() string {
+	if strings.EqualFold(s.Alias, s.Database) {
+		return ""
+	}
+	return s.Alias
 }
 
 const manifestPath = ".svcide/manifest.json"
@@ -49,10 +88,36 @@ func (man *Manifest) migrate() {
 	if man.Objects == nil {
 		man.Objects = map[string]ManifestObject{}
 	}
-	if len(man.Databases) == 0 && man.SourceDatabase != "" {
-		man.Databases = []string{man.SourceDatabase}
+	if len(man.Sources) == 0 {
+		databases := man.Databases
+		if len(databases) == 0 && man.SourceDatabase != "" {
+			databases = []string{man.SourceDatabase}
+		}
+		for _, name := range databases {
+			man.Sources = append(man.Sources, Source{Alias: name, Database: name, Server: man.SourceServer})
+		}
+		man.LegacyConnID = man.SourceConnID
 	}
-	man.SourceDatabase = ""
+	man.SourceServer, man.SourceConnID, man.Databases, man.SourceDatabase = "", "", nil, ""
+}
+
+// SourceByAlias looks up a tracked source by its repo-side alias.
+func (man *Manifest) SourceByAlias(alias string) (Source, bool) {
+	for _, s := range man.Sources {
+		if strings.EqualFold(s.Alias, alias) {
+			return s, true
+		}
+	}
+	return Source{}, false
+}
+
+// DatabaseNames lists the database name of every tracked source, in order.
+func (man *Manifest) DatabaseNames() []string {
+	names := make([]string, 0, len(man.Sources))
+	for _, s := range man.Sources {
+		names = append(names, s.Database)
+	}
+	return names
 }
 
 func typeFolder(t string) string {
@@ -97,10 +162,13 @@ const (
 )
 
 // ObjectPath returns the repo-relative path for an object:
-// SQL/<database>/<schema>/<TypeFolder>/<name>.sql
-func ObjectPath(database, schema, name, objType string) string {
+// SQL/<alias>/<schema>/<TypeFolder>/<name>.sql
+//
+// alias is the source's repo-side identity (Source.Alias), which defaults to the
+// database name — so single-source repos keep the paths they already have.
+func ObjectPath(alias, schema, name, objType string) string {
 	return filepath.ToSlash(filepath.Join(
-		layoutRoot, sanitizeName(database), sanitizeName(schema), typeFolder(objType), sanitizeName(name)+".sql"))
+		layoutRoot, sanitizeName(alias), sanitizeName(schema), typeFolder(objType), sanitizeName(name)+".sql"))
 }
 
 // SQLFolderExists reports whether <repo>/SQL/ exists on disk. Combined with a
@@ -208,10 +276,12 @@ type SyncResult struct {
 	Encrypted []string `json:"encrypted"`
 }
 
-// PoolFunc resolves a database name to a connection pool on the source server.
-type PoolFunc func(database string) (*sqldb.DB, error)
+// PoolFunc resolves a source alias to a connection pool for that source's
+// database. Callers map alias → local connection profile, so each source can
+// live on a different server.
+type PoolFunc func(alias string) (*sqldb.DB, error)
 
-// Sync scripts all objects from every manifest database into the worktree,
+// Sync scripts all objects from every manifest source into the worktree,
 // removing files whose objects no longer exist. Git status afterwards is the
 // drift report.
 func (m *Manager) Sync(ctx context.Context, poolFor PoolFunc, man *Manifest) (*SyncResult, error) {
@@ -224,32 +294,38 @@ func (m *Manager) Sync(ctx context.Context, poolFor PoolFunc, man *Manifest) (*S
 	newObjects := map[string]ManifestObject{}
 	seen := map[string]bool{}
 
-	for _, database := range man.Databases {
-		pool, err := poolFor(database)
+	for _, src := range man.Sources {
+		pool, err := poolFor(src.Alias)
 		if err != nil {
-			return nil, fmt.Errorf("connect to %s: %w", database, err)
+			return nil, fmt.Errorf("connect to %s: %w", src.Alias, err)
 		}
 		modules, err := db.ScriptModules(ctx, pool)
 		if err != nil {
-			return nil, fmt.Errorf("script modules in %s: %w", database, err)
+			return nil, fmt.Errorf("script modules in %s: %w", src.Alias, err)
 		}
 		tables, err := db.ScriptTables(ctx, pool)
 		if err != nil {
-			return nil, fmt.Errorf("script tables in %s: %w", database, err)
+			return nil, fmt.Errorf("script tables in %s: %w", src.Alias, err)
 		}
 
 		for _, obj := range append(modules, tables...) {
 			if obj.Encrypted {
-				res.Encrypted = append(res.Encrypted, database+"."+obj.Schema+"."+obj.Name)
+				res.Encrypted = append(res.Encrypted, src.Alias+"."+obj.Schema+"."+obj.Name)
 				continue
 			}
-			rel := ObjectPath(database, obj.Schema, obj.Name, obj.Type)
+			rel := ObjectPath(src.Alias, obj.Schema, obj.Name, obj.Type)
 			if seen[rel] {
 				res.Warnings = append(res.Warnings, fmt.Sprintf("name collision on %s (case-insensitive filesystem); %s.%s skipped", rel, obj.Schema, obj.Name))
 				continue
 			}
 			seen[rel] = true
-			newObjects[rel] = ManifestObject{Database: database, Schema: obj.Schema, Name: obj.Name, Type: obj.Type}
+			newObjects[rel] = ManifestObject{
+				Alias:    src.manifestAlias(),
+				Database: src.Database,
+				Schema:   obj.Schema,
+				Name:     obj.Name,
+				Type:     obj.Type,
+			}
 
 			abs := filepath.Join(root, filepath.FromSlash(rel))
 			if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
@@ -306,7 +382,7 @@ var candidateTypes = []string{"table", "view", "proc", "tvf", "scalar", "trigger
 //
 // Encrypted objects are skipped (flagged, not written). Callers are responsible
 // for the repo-open / database-tracked checks before calling.
-func (m *Manager) SyncObject(database, schema, name string, obj *db.ScriptedObject, man *Manifest) (*SyncObjectResult, error) {
+func (m *Manager) SyncObject(src Source, schema, name string, obj *db.ScriptedObject, man *Manifest) (*SyncObjectResult, error) {
 	_, root, err := m.current()
 	if err != nil {
 		return nil, err
@@ -326,10 +402,10 @@ func (m *Manager) SyncObject(database, schema, name string, obj *db.ScriptedObje
 	if obj != nil {
 		// canonical identity as the database reports it
 		schema, name = obj.Schema, obj.Name
-		rel := ObjectPath(database, schema, name, obj.Type)
+		rel := ObjectPath(src.Alias, schema, name, obj.Type)
 
 		// clear any stale files/manifest entries under other type folders
-		removeObjectFiles(root, man, database, schema, name, rel)
+		removeObjectFiles(root, man, src.Alias, schema, name, rel)
 
 		abs := filepath.Join(root, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
@@ -341,7 +417,13 @@ func (m *Manager) SyncObject(database, schema, name string, obj *db.ScriptedObje
 				return nil, err
 			}
 		}
-		man.Objects[rel] = ManifestObject{Database: database, Schema: schema, Name: name, Type: obj.Type}
+		man.Objects[rel] = ManifestObject{
+			Alias:    src.manifestAlias(),
+			Database: src.Database,
+			Schema:   schema,
+			Name:     name,
+			Type:     obj.Type,
+		}
 		res.Written = true
 		res.Path = rel
 		if err := m.WriteManifest(man); err != nil {
@@ -351,7 +433,7 @@ func (m *Manager) SyncObject(database, schema, name string, obj *db.ScriptedObje
 	}
 
 	// object no longer exists — remove it from every candidate type folder
-	res.Deleted = removeObjectFiles(root, man, database, schema, name, "")
+	res.Deleted = removeObjectFiles(root, man, src.Alias, schema, name, "")
 	if err := m.WriteManifest(man); err != nil {
 		return nil, err
 	}
@@ -363,10 +445,10 @@ func (m *Manager) SyncObject(database, schema, name string, obj *db.ScriptedObje
 // if any file was removed from disk. Comparison of manifest identity is
 // case-insensitive to tolerate casing differences between the request and the
 // stored canonical identity.
-func removeObjectFiles(root string, man *Manifest, database, schema, name, keepRel string) bool {
+func removeObjectFiles(root string, man *Manifest, alias, schema, name, keepRel string) bool {
 	removedFile := false
 	for _, t := range candidateTypes {
-		rel := ObjectPath(database, schema, name, t)
+		rel := ObjectPath(alias, schema, name, t)
 		if rel == keepRel {
 			continue
 		}
@@ -379,7 +461,8 @@ func removeObjectFiles(root string, man *Manifest, database, schema, name, keepR
 		if key == keepRel {
 			continue
 		}
-		if strings.EqualFold(o.Database, database) && strings.EqualFold(o.Schema, schema) && strings.EqualFold(o.Name, name) {
+		// alias, not database: two sources may share a database name
+		if strings.EqualFold(o.SourceAlias(), alias) && strings.EqualFold(o.Schema, schema) && strings.EqualFold(o.Name, name) {
 			delete(man.Objects, key)
 		}
 	}
@@ -396,7 +479,7 @@ type ObjectStatusEntry struct {
 }
 
 // ObjectStatus maps every changed SQL/ file in the worktree back to the
-// database object it represents, keyed "<database>|<schema>|<name>".
+// database object it represents, keyed "<alias>|<schema>|<name>".
 //
 // Added/modified paths are resolved via the current worktree manifest.
 // Deleted paths are resolved via the manifest at HEAD instead, since Sync
@@ -443,7 +526,7 @@ func (m *Manager) ObjectStatus() (map[string]ObjectStatusEntry, error) {
 		if !ok {
 			continue
 		}
-		key := obj.Database + "|" + obj.Schema + "|" + obj.Name
+		key := obj.SourceAlias() + "|" + obj.Schema + "|" + obj.Name
 		result[key] = ObjectStatusEntry{State: fs.State, Type: obj.Type, Path: fs.Path}
 	}
 	return result, nil
@@ -469,8 +552,9 @@ func (m *Manager) manifestAtHEAD() *Manifest {
 //     says it was altered after creation (modify_date > create_date)
 type DriftReport map[string]string // "schema.name" → status
 
-// Drift compares one database against the worktree without writing anything.
-func (m *Manager) Drift(ctx context.Context, pool *sqldb.DB, database string) (DriftReport, error) {
+// Drift compares one source's live database against the worktree without
+// writing anything. alias selects which SQL/<alias>/ tree to compare against.
+func (m *Manager) Drift(ctx context.Context, pool *sqldb.DB, alias string) (DriftReport, error) {
 	_, root, err := m.current()
 	if err != nil {
 		return nil, err
@@ -490,7 +574,7 @@ func (m *Manager) Drift(ctx context.Context, pool *sqldb.DB, database string) (D
 			continue
 		}
 		key := obj.Schema + "." + obj.Name
-		rel := ObjectPath(database, obj.Schema, obj.Name, obj.Type)
+		rel := ObjectPath(alias, obj.Schema, obj.Name, obj.Type)
 		existing, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		switch {
 		case readErr == nil && string(existing) == obj.SQL:

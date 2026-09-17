@@ -8,6 +8,7 @@ import CompareTab from '../editor/CompareTab'
 import ResultsPane from '../results/ResultsPane'
 import ConnectionDialog from '../connections/ConnectionDialog'
 import ChangelogDialog from '../editor/ChangelogDialog'
+import CheckoutPreviewDialog from '../git/CheckoutPreviewDialog'
 import GitPanel from '../git/GitPanel'
 import Toolbar from './Toolbar'
 import SettingsDialog from './SettingsDialog'
@@ -190,6 +191,7 @@ export default function Shell(): React.JSX.Element {
       )}
       {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} />}
       <ChangelogDialog />
+      <CheckoutPreviewDialog />
     </div>
   )
 }
